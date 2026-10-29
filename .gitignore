@@ -1,0 +1,57 @@
+# Dependências
+node_modules/
+.pnpm-store/
+
+# Variáveis de ambiente (o .env.example deve ir para o repositório)
+.env
+.env.*
+!.env.example
+
+# Build
+dist/
+build/
+out/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# Banco SQLite local
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Prisma Client gerado (se configurado fora do node_modules)
+backend/src/generated/
+
+# Mastra
+.mastra/
+
+# Testes
+coverage/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Claude Code: configurações e memória locais (as de projeto continuam versionadas)
+.claude/settings.local.json
+.claude/agent-memory-local/
+
+# Deploy
+.vercel/
+
+# Editor e sistema operacional
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

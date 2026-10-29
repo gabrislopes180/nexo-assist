@@ -1,0 +1,200 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="System design" id="nexo-sysdesign">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="cFE" value="Frontend · Next.js" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;fontSize=13;fillColor=#f3faf1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="30" y="120" width="250" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="cAPI" value="API · Express" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;fontSize=13;fillColor=#f1f6fd;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="320" y="120" width="300" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="cAG" value="Agent · Mastra" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;fontSize=13;fillColor=#f8f3fa;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="660" y="120" width="300" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="cSV" value="Serviços (separados do agent)" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;fontSize=13;fillColor=#fffbee;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="120" width="280" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="cDB" value="Dados" style="rounded=1;arcSize=2;whiteSpace=wrap;html=1;dashed=1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;fontSize=13;fillColor=#fdf3f3;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="120" width="220" height="600" as="geometry" />
+        </mxCell>
+        <mxCell id="chat" value="&lt;b&gt;Chat do funcionário&lt;/b&gt;&lt;br&gt;Telas 2 e 3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="55" y="195" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="console" value="&lt;b&gt;Console do analista&lt;/b&gt;&lt;br&gt;Telas 4 e 5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="55" y="585" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="auth" value="Sessão&lt;br&gt;(resolve o userId do login)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="360" y="175" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="chatRoute" value="POST /chat&lt;br&gt;valida limite de 30 msgs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="360" y="265" width="220" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="gate" value="Quem está com&lt;br&gt;a conversa?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="380" y="355" width="180" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="consoleRoute" value="Rotas /console&lt;br&gt;assumir · devolver · encerrar&lt;br&gt;chamados do funcionário" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="360" y="585" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" value="Provedor de LLM (externo)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;fontSize=11;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="700" y="28" width="220" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="agent" value="&lt;b&gt;Agent Nexo Assist&lt;/b&gt;&lt;br&gt;instruções + modelo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="700" y="180" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="tools" value="&lt;b&gt;Tools&lt;/b&gt;&lt;br&gt;• buscarArtigos&lt;br&gt;• listarMeusChamados&lt;br&gt;• prepararRascunho&lt;br&gt;• confirmarRascunho&lt;br&gt;• transferirParaAnalista" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="700" y="300" width="220" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="trace" value="&lt;b&gt;Registro de transparência&lt;/b&gt;&lt;br&gt;entendeu · ações · confiança · porquê" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="690" y="500" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="knowledge" value="&lt;b&gt;KnowledgeService&lt;/b&gt;&lt;br&gt;central de ajuda" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="190" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ticket" value="&lt;b&gt;TicketService&lt;/b&gt;&lt;br&gt;consultar · criar · atualizar&lt;br&gt;reabrir · transferir" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="325" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="conv" value="&lt;b&gt;ConversationService&lt;/b&gt;&lt;br&gt;mensagens · estado · rascunho" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="500" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="legacy" value="&lt;b&gt;Simula o legado&lt;/b&gt;&lt;br&gt;latência e falhas → timeout + retry.&lt;br&gt;Filtra sempre pelo dono do chamado." style="shape=note;size=14;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;align=left;verticalAlign=top;spacingLeft=6;spacingTop=4;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="630" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="prisma" value="Prisma ORM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="268" width="160" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="sqlite" value="&lt;b&gt;SQLite&lt;/b&gt;&lt;br&gt;User · Ticket · TicketEvent&lt;br&gt;Article · Conversation&lt;br&gt;Message" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="360" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="mem" value="&lt;b&gt;Memória do Mastra&lt;/b&gt;&lt;br&gt;(LibSQL)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="570" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="rules" value="&lt;b&gt;Regras no código, não no LLM&lt;/b&gt;&lt;br&gt;Pausa do agent, limite de 30 mensagens, confirmação antes de qualquer escrita e privacidade são verificadas pela API e pelos serviços. O LLM só decide qual tool chamar e com quais argumentos; o userId vem sempre da sessão." style="shape=note;size=14;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;align=left;verticalAlign=top;spacingLeft=6;spacingTop=4;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="405" y="758" width="760" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="1. mensagem" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="chat" target="auth">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="390" y="209" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;" edge="1" parent="1" source="auth" target="chatRoute">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="2. checa estado" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;" edge="1" parent="1" source="chatRoute" target="gate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="3. com o agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="gate" target="agent">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="400" />
+              <mxPoint x="640" y="210" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="4. prompt + tools ⇄ decisão" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;startArrow=block;startFill=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="agent" target="llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="5. tool calls" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;" edge="1" parent="1" source="agent" target="tools">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="6. userId da sessão" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="tools" target="knowledge">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="970" y="384" />
+              <mxPoint x="970" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="tools" target="ticket">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="transferir:&lt;br&gt;estado + resumo" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.85;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="tools" target="conv">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="960" y="402" />
+              <mxPoint x="960" y="512" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.3;entryDx=0;entryDy=0;" edge="1" parent="1" source="knowledge" target="prisma">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1300" y="220" />
+              <mxPoint x="1300" y="283" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="ticket" target="prisma">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1310" y="381" />
+              <mxPoint x="1310" y="301" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="conv" target="prisma">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1290" y="530" />
+              <mxPoint x="1290" y="330" />
+              <mxPoint x="1430" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;" edge="1" parent="1" source="prisma" target="sqlite">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="histórico (contexto)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.3;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="agent" target="mem">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="985" y="198" />
+              <mxPoint x="985" y="100" />
+              <mxPoint x="1310" y="100" />
+              <mxPoint x="1310" y="610" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e14" value="7. registra" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=0;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="agent" target="trace">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="680" y="258" />
+              <mxPoint x="680" y="530" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e15" value="8. salva mensagem + registro" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="trace" target="conv">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" value="9. stream (SSE):&lt;br&gt;ações + resposta" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="chatRoute" target="chat">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="320" y="290" />
+              <mxPoint x="320" y="279" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e17" value="aguardando / com analista:&lt;br&gt;salva sem chamar o LLM" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;dashed=1;strokeColor=#b85450;fontColor=#b85450;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="gate" target="conv">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="470" y="475" />
+              <mxPoint x="1085" y="475" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e18" value="lista · histórico&lt;br&gt;mensagens do analista" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;dashed=1;strokeColor=#b85450;fontColor=#b85450;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="console" target="consoleRoute">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;html=1;endArrow=block;endFill=1;fontSize=10;labelBackgroundColor=default;dashed=1;strokeColor=#b85450;fontColor=#b85450;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.3;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="consoleRoute" target="conv">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1206" y="620" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
