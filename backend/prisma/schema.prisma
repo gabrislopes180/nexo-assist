@@ -1,0 +1,209 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Enums (SQLite: TEXT sem CHECK; validar com Zod na borda)
+
+enum UserRole {
+  EMPLOYEE
+  ANALYST
+}
+
+enum TicketType {
+  INC // algo parou ou não funciona
+  REQ // pedido de acesso, equipamento ou software
+}
+
+enum TicketCategory {
+  ACCESS // Acesso
+  NETWORK_VPN // Rede e VPN
+  HARDWARE
+  SOFTWARE
+  EMAIL // E-mail
+  OTHER // Outros
+}
+
+enum TicketPriority {
+  CRITICAL // 1h corrida (plantão 24h)
+  HIGH // 4 horas úteis
+  MEDIUM // 3 dias úteis
+  LOW // 5 dias úteis
+}
+
+enum TicketStatus {
+  WAITING_ANALYST // Aguardando analista
+  IN_PROGRESS // Em andamento
+  WAITING_EMPLOYEE // Aguardando funcionário (prazo pausado)
+  APPROVED // Aprovado (só REQ)
+  RESOLVED // Resolvido
+}
+
+enum AffectedScope {
+  INDIVIDUAL
+  TEAM
+  COMPANY
+}
+
+enum TicketEventType {
+  CREATED
+  COMMENT
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  REOPENED
+  TRANSFERRED
+}
+
+enum ActorType {
+  EMPLOYEE
+  ANALYST
+  AGENT
+  SYSTEM
+}
+
+enum ConversationStatus {
+  WITH_AGENT
+  WAITING_ANALYST
+  WITH_ANALYST
+  CLOSED
+}
+
+enum HandoffReason {
+  EMPLOYEE_REQUEST
+  CRITICAL
+  OVERDUE
+  LOW_CONFIDENCE
+}
+
+enum MessageAuthorType {
+  EMPLOYEE
+  AGENT
+  ANALYST
+  SYSTEM // avisos como "Ana assumiu a conversa"
+}
+
+model User {
+  id         String   @id @default(cuid())
+  name       String
+  email      String   @unique // login simulado, sem senha
+  role       UserRole
+  department String?
+  createdAt  DateTime @default(now())
+
+  tickets               Ticket[]
+  ticketEvents          TicketEvent[]
+  conversations         Conversation[] @relation("ConversationOwner")
+  assignedConversations Conversation[] @relation("ConversationAnalyst")
+  messages              Message[]
+}
+
+model Ticket {
+  id                  String         @id @default(cuid())
+  code                String         @unique // INC-20311 / REQ-10442
+  type                TicketType
+  category            TicketCategory
+  priority            TicketPriority
+  status              TicketStatus
+  title               String
+  description         String
+  affectedScope       AffectedScope
+  affectedDescription String?
+  ownerId             String
+  createdAt           DateTime       @default(now())
+  // Sem @updatedAt de propósito: = createdAt do último TicketEvent, na mesma transação.
+  updatedAt           DateTime       @default(now())
+  resolvedAt          DateTime?
+  slaStartedAt        DateTime? // início da janela de prazo atual (null em RESOLVED/WAITING_EMPLOYEE)
+  dueAt               DateTime? // prazo atual; null em RESOLVED e WAITING_EMPLOYEE. Vencido = dueAt < now
+
+  owner  User          @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  events TicketEvent[]
+
+  @@index([ownerId, status])
+  @@index([status, dueAt])
+}
+
+model TicketCounter {
+  type       TicketType @id
+  lastNumber Int
+}
+
+// Append-only (trigger no banco bloqueia UPDATE)
+model TicketEvent {
+  id             String          @id @default(cuid())
+  ticketId       String
+  type           TicketEventType
+  actorType      ActorType
+  actorId        String?
+  content        String?
+  fromStatus     TicketStatus?
+  toStatus       TicketStatus?
+  fromPriority   TicketPriority?
+  toPriority     TicketPriority?
+  dueAt          DateTime? // novo prazo definido por este evento
+  conversationId String?
+  createdAt      DateTime        @default(now())
+
+  ticket       Ticket        @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  actor        User?         @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+}
+
+model Article {
+  id         String         @id @default(cuid())
+  slug       String         @unique
+  title      String
+  content    String
+  category   TicketCategory
+  keywords   String // vírgula, minúsculas
+  searchText String // normalize(title + keywords + content)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+}
+
+model Conversation {
+  id             String             @id @default(cuid())
+  ownerId        String
+  status         ConversationStatus @default(WITH_AGENT)
+  analystId      String?
+  handoffSummary String?
+  handoffReason  HandoffReason?
+  handoffAt      DateTime?
+  messageCount   Int                @default(0) // só mensagens do FUNCIONÁRIO; limite 30
+  pendingDraft   Json?
+  pendingDraftId String?
+  lastMessageAt  DateTime           @default(now())
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  closedAt       DateTime?
+
+  owner        User          @relation("ConversationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  analyst      User?         @relation("ConversationAnalyst", fields: [analystId], references: [id], onDelete: SetNull)
+  messages     Message[]
+  ticketEvents TicketEvent[]
+
+  @@index([ownerId, createdAt])
+  @@index([status, lastMessageAt])
+  @@index([analystId, status])
+}
+
+model Message {
+  id             String            @id @default(cuid())
+  conversationId String
+  authorType     MessageAuthorType
+  authorId       String? // null para AGENT e SYSTEM
+  content        String
+  trace          Json? // transparência, só em mensagens do AGENT
+  createdAt      DateTime          @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+}

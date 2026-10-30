@@ -85,13 +85,34 @@ nexo-assist/
     ├── agent/         Agent Mastra, tools e instruções
     ├── tickets/       Serviço de chamados simulado
     ├── knowledge/     Central de ajuda
-    ├── db/            Schema, migrations e seed
+    ├── db/            Conexão e seed (schema e migrations em backend/prisma)
     └── shared/        Tipos compartilhados
 ```
 
 ## Como rodar
 
-_A definir._
+Pré-requisito: Node.js 22+.
+
+```bash
+cd backend
+cp .env.example .env   # DATABASE_URL="file:./dev.db" (SQLite local)
+npm install            # também gera o Prisma Client
+npm run db:setup       # aplica as migrations, gera o client e popula com dados de demonstração
+npm run dev            # API em http://localhost:8000 (GET /health)
+```
+
+Outros comandos úteis (em `backend/`):
+
+| Comando | O que faz |
+|---|---|
+| `npm test` | Testes das regras de prazo e de chamados |
+| `npm run typecheck` | Checagem de tipos |
+| `npm run db:seed` | Recria os dados de demonstração (pode rodar quantas vezes quiser) |
+| `npm run db:migrate` | Cria e aplica uma nova migration após mudar o schema |
+| `npm run db:reset` | Apaga o banco e recria do zero |
+| `npm run db:studio` | Abre o Prisma Studio |
+
+Usuários de demonstração (login simulado, sem senha): `marina.costa@nexo.example`, `rafael.lima@nexo.example` e `juliana.alves@nexo.example` (funcionários); `ana.souza@nexo.example` e `bruno.martins@nexo.example` (analistas).
 
 ## Como o agent decide o que fazer
 

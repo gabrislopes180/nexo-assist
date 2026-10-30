@@ -1,0 +1,1 @@
+- [Modelo de dados v1 (proposto)](project_data_model_v1.md) — schema/SLA/seed propostos em 2026-10-29 e fatos verificados do Prisma 7/TS 7
