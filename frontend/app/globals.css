@@ -1,0 +1,268 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+  Nexo Assist — tema gerado a partir de docs/design-system/tokens.json.
+  Os nomes das variáveis são os mesmos do design system (--paper, --ink-3, --cta...).
+  Para mudar um valor, mude o token e mantenha os dois em sincronia.
+  Só existe o tema claro (o protótipo não tem tema escuro).
+*/
+
+:root {
+  /* Cores */
+  --paper: #FFFFFF;
+  --desk: #F6F7F9;
+  --thread: #EEF1F5;
+  --day-pill: #FFFFFFCC;
+  --ink: #1B2431;
+  --ink-2: #3D4656;
+  --ink-3: #5B6472;
+  --rule: #E6E8EC;
+  --line-control: #1B24311F;
+  --line-card: #1B243117;
+  --line-radio: #1B243133;
+  --line-thread: #1B243114;
+  --cta: #0062C4;
+  --info: #0285F7;
+  --info-hover: #0071D6;
+  --info-soft: #0285F712;
+  --info-text: #0069C7;
+  --success: #00BD6C;
+  --success-soft: #00BD6C14;
+  --success-text: #00804A;
+  --warning: #F5A500;
+  --warning-soft: #F5A50018;
+  --warning-text: #946300;
+  --danger: #EE343B;
+  --danger-soft: #EE343B12;
+  --danger-text: #C4161D;
+  --bubble-agent: #E6EFFA;
+  --bubble-analyst: #E3F4EA;
+  --row-selected: #0062C40A;
+  --dot-neutral: #1B243140;
+  --dot-medium: #1B243166;
+  --dot-resolved: #1B243155;
+  --mark: #037AF6;
+  --on-ink: #FFFFFF;
+  --on-ink-muted: #FFFFFF8C;
+  --on-ink-rule: #FFFFFF1A;
+  --avatar-blue-bg: #DCE9F7;
+  --avatar-blue-fg: #0062C4;
+  --avatar-orange-bg: #F6E3D3;
+  --avatar-orange-fg: #9A4A12;
+  --avatar-violet-bg: #E6E1F7;
+  --avatar-violet-fg: #5B3FC4;
+  --avatar-green-bg: #DDF0E6;
+  --avatar-green-fg: #1E7A4C;
+  --avatar-rose-bg: #F7E1E6;
+  --avatar-rose-fg: #A3324F;
+  --avatar-yellow-bg: #FBEFD0;
+  --avatar-yellow-fg: #8A6100;
+  --avatar-gray-bg: #E5E8EC;
+  --avatar-gray-fg: var(--ink-2);
+
+  /* Tipografia (as fontes são carregadas em app/layout.tsx com next/font) */
+  --font-ui-stack: var(--font-schibsted-grotesk), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display-stack: var(--font-newsreader), Georgia, "Times New Roman", serif;
+
+  /* Medidas de layout */
+  --sidebar-width: 232px;
+  --rail-width: 64px;
+  --list-width: 380px;
+  --panel-width: 340px;
+  --topbar-height: 64px;
+  --control-lg: 44px;
+  --control-md: 36px;
+  --composer-height: 48px;
+  --agent-bubble-width: 600px;
+  --user-bubble-width: 520px;
+  --chat-gutter: 200px;
+
+
+  /* Mapeamento para os nomes que os componentes do shadcn usam */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--paper);
+  --card-foreground: var(--ink);
+  --popover: var(--paper);
+  --popover-foreground: var(--ink);
+  --primary: var(--cta);
+  --primary-foreground: var(--on-ink);
+  --secondary: var(--desk);
+  --secondary-foreground: var(--ink);
+  --muted: var(--desk);
+  --muted-foreground: var(--ink-3);
+  --accent: var(--desk);
+  --accent-foreground: var(--ink);
+  --destructive: var(--danger-text);
+  --border: var(--rule);
+  --input: var(--line-control);
+  --ring: var(--cta);
+  --radius: 8px;
+}
+
+@theme inline {
+  /* Cores do design system: bg-paper, text-ink-3, border-rule, bg-info-soft... */
+  --color-paper: var(--paper);
+  --color-desk: var(--desk);
+  --color-thread: var(--thread);
+  --color-day-pill: var(--day-pill);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-line-control: var(--line-control);
+  --color-line-card: var(--line-card);
+  --color-line-radio: var(--line-radio);
+  --color-line-thread: var(--line-thread);
+  --color-cta: var(--cta);
+  --color-info: var(--info);
+  --color-info-hover: var(--info-hover);
+  --color-info-soft: var(--info-soft);
+  --color-info-text: var(--info-text);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-text: var(--success-text);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-text: var(--warning-text);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-text: var(--danger-text);
+  --color-bubble-agent: var(--bubble-agent);
+  --color-bubble-analyst: var(--bubble-analyst);
+  --color-row-selected: var(--row-selected);
+  --color-dot-neutral: var(--dot-neutral);
+  --color-dot-medium: var(--dot-medium);
+  --color-dot-resolved: var(--dot-resolved);
+  --color-mark: var(--mark);
+  --color-on-ink: var(--on-ink);
+  --color-on-ink-muted: var(--on-ink-muted);
+  --color-on-ink-rule: var(--on-ink-rule);
+  --color-avatar-blue-bg: var(--avatar-blue-bg);
+  --color-avatar-blue-fg: var(--avatar-blue-fg);
+  --color-avatar-orange-bg: var(--avatar-orange-bg);
+  --color-avatar-orange-fg: var(--avatar-orange-fg);
+  --color-avatar-violet-bg: var(--avatar-violet-bg);
+  --color-avatar-violet-fg: var(--avatar-violet-fg);
+  --color-avatar-green-bg: var(--avatar-green-bg);
+  --color-avatar-green-fg: var(--avatar-green-fg);
+  --color-avatar-rose-bg: var(--avatar-rose-bg);
+  --color-avatar-rose-fg: var(--avatar-rose-fg);
+  --color-avatar-yellow-bg: var(--avatar-yellow-bg);
+  --color-avatar-yellow-fg: var(--avatar-yellow-fg);
+  --color-avatar-gray-bg: var(--avatar-gray-bg);
+  --color-avatar-gray-fg: var(--avatar-gray-fg);
+
+  /* Cores do shadcn */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Fontes: font-ui (padrão) e font-display (só no login) */
+  --font-sans: var(--font-ui-stack);
+  --font-ui: var(--font-ui-stack);
+  --font-display: var(--font-display-stack);
+
+  /* Raios do design system (sobrescrevem a escala do Tailwind e a do shadcn) */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* Sombras: shadow-xs, shadow-sm, shadow-bubble, shadow-raised, shadow-card, shadow-cta */
+  --shadow-xs: 0 1px 2px 0 #1B24310A;
+  --shadow-sm: 0 1px 2px 0 #1B24310D;
+  --shadow-bubble: 0 1px 2px 0 #1B243112;
+  --shadow-raised: 0 1px 2px 0 #1B24311A;
+  --shadow-card: 0 1px 2px 0 #1B24310D, 0 6px 18px 0 #1B24310A;
+  --shadow-cta: 0 1px 2px 0 #0062C433, 0 6px 16px 0 #0062C426;
+
+  /* Estilos de texto do design system: text-body, text-label, text-caption, text-card-title... */
+  --text-display-xl: 54px;
+  --text-display-xl--line-height: 1.04;
+  --text-display-xl--letter-spacing: -1.2px;
+  --text-display-xl--font-weight: 400;
+  --text-display-lg: 40px;
+  --text-display-lg--line-height: 1.1;
+  --text-display-lg--letter-spacing: -0.8px;
+  --text-display-lg--font-weight: 400;
+  --text-display-md: 34px;
+  --text-display-md--letter-spacing: -0.6px;
+  --text-display-md--font-weight: 400;
+  --text-page-title: 24px;
+  --text-page-title--font-weight: 700;
+  --text-panel-title: 20px;
+  --text-panel-title--letter-spacing: -0.3px;
+  --text-panel-title--font-weight: 700;
+  --text-card-title: 18px;
+  --text-card-title--line-height: 1.25;
+  --text-card-title--letter-spacing: -0.2px;
+  --text-card-title--font-weight: 600;
+  --text-brand: 17px;
+  --text-brand--letter-spacing: -0.2px;
+  --text-brand--font-weight: 700;
+  --text-body-lg: 16px;
+  --text-body-lg--line-height: 1.55;
+  --text-body-lg--font-weight: 400;
+  --text-heading: 15.5px;
+  --text-heading--line-height: 1.3;
+  --text-heading--font-weight: 600;
+  --text-subtitle: 15.5px;
+  --text-subtitle--line-height: 1.5;
+  --text-subtitle--font-weight: 400;
+  --text-body: 14.5px;
+  --text-body--line-height: 1.45;
+  --text-body--font-weight: 400;
+  --text-body-strong: 14.5px;
+  --text-body-strong--font-weight: 500;
+  --text-label: 13.5px;
+  --text-label--font-weight: 500;
+  --text-label-strong: 13.5px;
+  --text-label-strong--font-weight: 600;
+  --text-small: 13.5px;
+  --text-small--line-height: 1.5;
+  --text-small--font-weight: 400;
+  --text-caption: 12.5px;
+  --text-caption--font-weight: 400;
+  --text-caption-strong: 12.5px;
+  --text-caption-strong--font-weight: 600;
+  --text-micro: 11.5px;
+  --text-micro--font-weight: 500;
+  --text-tag: 11px;
+  --text-tag--font-weight: 600;
+  --text-time: 11px;
+  --text-time--font-weight: 400;
+  --text-badge: 10px;
+  --text-badge--font-weight: 700;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-background text-foreground font-ui antialiased;
+  }
+  /* Títulos do login usam font-display; todo o resto, font-ui */
+}
