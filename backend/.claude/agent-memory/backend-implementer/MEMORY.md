@@ -1,0 +1,1 @@
+- [Papéis do seed](project_seed_roles.md) — users.ts é a fonte certa dos papéis; a frase do README diverge de propósito

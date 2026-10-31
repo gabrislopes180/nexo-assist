@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { pendingDraftSchema } from "./conversation-draft.js";
+import { loginRequestSchema } from "./session.js";
 import { agentTraceSchema } from "./transparency.js";
 
 const validTrace = {
@@ -29,6 +30,25 @@ describe("agentTraceSchema", () => {
     assert.equal(agentTraceSchema.safeParse(badAction).success, false);
     const { reason: _reason, ...withoutReason } = validTrace;
     assert.equal(agentTraceSchema.safeParse(withoutReason).success, false);
+  });
+});
+
+describe("loginRequestSchema", () => {
+  it("normaliza espaços e maiúsculas do e-mail", () => {
+    assert.deepEqual(loginRequestSchema.parse({ email: "  Pessoa@Nexo.Example " }), { email: "pessoa@nexo.example" });
+  });
+
+  it("descarta password de qualquer tipo e outros campos", () => {
+    for (const password of ["errada", "", 123, null, { a: 1 }]) {
+      const parsed = loginRequestSchema.parse({ email: "pessoa@nexo.example", password, rememberMe: true });
+      assert.deepEqual(parsed, { email: "pessoa@nexo.example" });
+    }
+  });
+
+  it("rejeita e-mail ausente, de outro tipo, malformado ou acima de 254 caracteres", () => {
+    for (const body of [{}, undefined, { email: 1 }, { email: "" }, { email: "sem-arroba" }, { email: `${"a".repeat(250)}@b.co` }]) {
+      assert.equal(loginRequestSchema.safeParse(body).success, false);
+    }
   });
 });
 
