@@ -45,6 +45,7 @@
   --on-ink: #ffffff;
   --on-ink-muted: #ffffff8c;
   --on-ink-rule: #ffffff1a;
+  --on-ink-surface: #ffffff09;
   --avatar-blue-bg: #dce9f7;
   --avatar-blue-fg: #0062c4;
   --avatar-orange-bg: #f6e3d3;
@@ -79,6 +80,8 @@
   --agent-bubble-width: 600px;
   --user-bubble-width: 520px;
   --chat-gutter: 200px;
+  --login-form-width: 380px;
+  --login-preview-width: 500px;
 
   /* Mapeamento para os nomes que os componentes do shadcn usam */
   --background: var(--paper);
@@ -140,6 +143,7 @@
   --color-on-ink: var(--on-ink);
   --color-on-ink-muted: var(--on-ink-muted);
   --color-on-ink-rule: var(--on-ink-rule);
+  --color-on-ink-surface: var(--on-ink-surface);
   --color-avatar-blue-bg: var(--avatar-blue-bg);
   --color-avatar-blue-fg: var(--avatar-blue-fg);
   --color-avatar-orange-bg: var(--avatar-orange-bg);
@@ -264,6 +268,8 @@
   }
   body {
     @apply bg-background text-foreground font-ui antialiased;
+    /* Estilos de texto sem lineHeight no tokens.json usam a altura normal da fonte */
+    line-height: normal;
   }
   /* Títulos do login usam font-display; todo o resto, font-ui */
 }

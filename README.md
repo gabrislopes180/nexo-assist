@@ -82,6 +82,7 @@ nexo-assist/
 ├── frontend/          Chat do funcionário e console do analista
 └── backend/src/
     ├── api/           Rotas Express (sessão, chat, console)
+    ├── auth/          Login simulado e token de sessão
     ├── agent/         Agent Mastra, tools e instruções
     ├── tickets/       Serviço de chamados simulado
     ├── knowledge/     Central de ajuda
@@ -95,11 +96,26 @@ Pré-requisito: Node.js 22+.
 
 ```bash
 cd backend
-cp .env.example .env   # DATABASE_URL="file:./dev.db" (SQLite local)
+cp .env.example .env   # variáveis descritas em "Autenticação"
 npm install            # também gera o Prisma Client
 npm run db:setup       # aplica as migrations, gera o client e popula com dados de demonstração
 npm run dev            # API em http://localhost:8000 (GET /health)
 ```
+
+Em outro terminal, suba o frontend:
+
+```bash
+cd frontend
+cp .env.example .env.local   # API_PROXY_TARGET=http://localhost:8000
+npm install
+npm run dev                  # http://localhost:3000 (login em /login)
+```
+
+O navegador só fala com o Next: as chamadas a `/api/*` são reescritas para `API_PROXY_TARGET`, e por isso o cookie de sessão fica no domínio do frontend.
+
+| Variável (`frontend/`) | Obrigatória | Descrição |
+|---|---|---|
+| `API_PROXY_TARGET` | No build de produção | URL do backend, sem barra final. Os rewrites são gravados no build: sem ela, `npm run build` falha. Em `npm run dev`, o padrão é `http://localhost:8000` |
 
 Outros comandos úteis (em `backend/`):
 
@@ -113,6 +129,28 @@ Outros comandos úteis (em `backend/`):
 | `npm run db:studio` | Abre o Prisma Studio |
 
 Usuários de demonstração (login simulado, sem senha): `marina.costa@nexo.example`, `rafael.lima@nexo.example` e `juliana.alves@nexo.example` (funcionários); `ana.souza@nexo.example` e `bruno.martins@nexo.example` (analistas).
+
+## Autenticação
+
+O login é simulado: o backend valida apenas se o e-mail existe e ignora a senha enviada. A sessão fica em um cookie `httpOnly` (`nexo_session`) válido por 8 horas, sem renovação automática, e sobrevive a reinícios da API.
+
+| Rota | Body | Resposta de sucesso |
+|---|---|---|
+| `POST /auth/login` | `{ "email": string }` | `200` com `{ "user": ... }` e o cookie de sessão |
+| `GET /auth/me` | nenhum (usa o cookie) | `200` com `{ "user": ... }` |
+| `POST /auth/logout` | nenhum | `204` sem body; limpa o cookie, com ou sem sessão válida |
+
+Erros seguem o formato `{ "error": { "code": "...", "message": "..." } }`.
+
+Variáveis de ambiente (`backend/.env`):
+
+| Variável | Obrigatória | Descrição |
+|---|---|---|
+| `DATABASE_URL` | Sim | Banco SQLite, ex.: `file:./dev.db`. Caminho relativo: rode a API a partir de `backend/` |
+| `SESSION_SECRET` | Sim | Segredo que assina a sessão, com no mínimo 32 caracteres. O valor do `.env.example` é recusado em produção |
+| `CORS_ORIGINS` | Sim | Origens exatas do frontend, separadas por vírgula, sem `*` e sem barra final |
+| `NODE_ENV` | Não | `production` envia o cookie só por HTTPS (`Secure`) |
+| `PORT` | Não | Porta da API; o padrão é `8000` |
 
 ## Como o agent decide o que fazer
 

@@ -24,6 +24,7 @@ frontend/
 ├── app/        Rotas do Next.js (App Router). Só arquivos que o Next exige.
 ├── pages/      Vazia de propósito (impede o Next de ler src/pages como rotas).
 ├── public/     Arquivos estáticos (public/brand: símbolo Nexo).
+├── proxy.ts    Redireciona / e /test pela presença do cookie de sessão. Não valida a sessão.
 └── src/        Código da aplicação, organizado em camadas FSD.
     ├── app/       Providers, configuração global (QueryClient etc.)
     ├── pages/     Telas montadas, uma por rota
@@ -85,7 +86,7 @@ Crie só os segmentos que a slice usa.
 | `entities/message` | Tipos de mensagem e registro de transparência, UserMessage, AgentMessage, ConsoleMessage, SystemEvent |
 | `entities/session` | Usuário logado |
 | `features/` | `send-message`, `confirm-ticket-draft`, `select-ticket`, `takeover-conversation`, `return-to-agent`, `close-conversation`, `login` |
-| `widgets/` | `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `app-sidebar`, `console-rail` |
+| `widgets/` | `login-hero`, `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `app-sidebar`, `console-rail` |
 | `pages/` | `login`, `chat`, `console`, `profile` |
 
 A tabela é um ponto de partida. Se algo não se encaixar, prefira a camada mais baixa que funcione e registre a decisão.
@@ -118,3 +119,4 @@ A tabela é um ponto de partida. Se algo não se encaixar, prefira a camada mais
 - `npm run dev`: servidor de desenvolvimento (http://localhost:3000)
 - `npm run build`: build de produção
 - `npm run lint`: ESLint
+- `npm test`: testes de lógica com Vitest, sem DOM (`*.test.ts`)

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Newsreader, Schibsted_Grotesk } from "next/font/google";
+import { Providers } from "@/app";
 import "./globals.css";
 
 // Fontes do design system (docs/design-system): Schibsted Grotesk em toda a
@@ -27,7 +28,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="pt-BR"
       className={`${schibstedGrotesk.variable} ${newsreader.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

@@ -64,7 +64,7 @@ Nexo Assist é o atendimento de TI da Nexo em formato de chat: o funcionário co
 - Status sempre aparece com ponto **e** palavra, nunca só pela cor: aguardando = `warning` / `warning-text`; em andamento = `info`; aprovado, online = `success` / `success-text`; transferida = `danger` / `danger-text`; resolvido = `dot-neutral`. Pílulas usam o fundo `*-soft` com o texto `*-text` do mesmo tom.
 - No chat do funcionário, a bolha do funcionário é `ink` com texto `on-ink`, e a do agent é `paper` com borda `rule`. No console, o cliente fica em `paper`, o agent em `bubble-agent` e o analista em `bubble-analyst`.
 - Avatares usam os pares `avatar-*-bg` / `avatar-*-fg`, escolhidos por pessoa e mantidos em todas as telas. O usuário logado usa `info-soft` com `info-text`.
-- O painel escuro do login é `ink`, com texto `on-ink` / `on-ink-muted` e divisórias `on-ink-rule`.
+- O painel escuro do login é `ink`, com texto `on-ink` / `on-ink-muted` e divisórias `on-ink-rule`. O card de prévia usa `on-ink-surface`.
 
 ## Tipografia
 
@@ -110,6 +110,11 @@ Os componentes ficam em `window.NexoAssist` e precisam do React 18 na página. S
 
 - Anel de foco de teclado em `cta` (o protótipo só mostra o foco de input).
 - Checkbox desmarcado com borda `line-radio` em `paper` (o protótipo só mostra o marcado).
+- Hover do botão primário em `info-hover`.
+- Erro de campo no `TextField`: borda `danger`, ícone e mensagem em `danger-text`.
+- Faixa de erro do login: `danger-soft` com `danger-text` e `radius-md`.
+- Estado de envio do botão: só troca o rótulo ("Entrando") e tira a seta.
+- `on-ink-surface`, `login-form-width` e `login-preview-width`: valores medidos em `screens/01-login.png`. A borda do card de prévia e a bolha do agent reaproveitam `on-ink-rule`.
 
 ## Não sincronizado
 

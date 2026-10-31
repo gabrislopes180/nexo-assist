@@ -1,0 +1,2 @@
+- [Autenticação e área logada](project_login_architecture.md) — cookie via rewrite, rotas por papel, camada processes, backend só com /auth, rewrite medido
+- [Armadilhas do shadcn add](project_shadcn_add_pitfalls.md) — pacote `cn`, sobrescrita do Button e colisão de `--sidebar-width`
