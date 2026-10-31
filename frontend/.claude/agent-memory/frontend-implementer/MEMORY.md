@@ -1,3 +1,4 @@
 - [Armadilhas do shadcn add](shadcn-add-gotchas.md) — pacote `cn` indevido, dependências ausentes e estilos de texto no twMerge
 - [Reaproveitar cores](feedback-color-reuse.md) — só criar token sem equivalente, comparando o valor composto sobre o fundo
 - [Notas de teste](testing-notes.md) — Vitest 4, portas, processo filho residual e fonte Newsreader
+- [Rotas ocultas em Activity](activity-hidden-routes.md) — formulário preservado no DOM, dois main e instant = false

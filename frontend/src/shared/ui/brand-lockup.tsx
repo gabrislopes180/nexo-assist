@@ -1,13 +1,23 @@
 import Image from "next/image";
 import { cn } from "@/shared/lib/utils";
 
+const MARK_SIZES = {
+  sm: { width: 20, height: 17 },
+  md: { width: 24, height: 20 },
+} as const;
+
 interface BrandLockupProps {
   /** `light` vai sobre fundo claro (símbolo azul); `dark`, sobre `ink` (branco). */
   variant?: "light" | "dark";
+  size?: keyof typeof MARK_SIZES;
   className?: string;
 }
 
-export function BrandLockup({ variant = "light", className }: BrandLockupProps) {
+export function BrandLockup({
+  variant = "light",
+  size = "md",
+  className,
+}: BrandLockupProps) {
   const isDark = variant === "dark";
 
   return (
@@ -15,8 +25,7 @@ export function BrandLockup({ variant = "light", className }: BrandLockupProps) 
       <Image
         src={isDark ? "/brand/nexo-mark-white.svg" : "/brand/nexo-mark.svg"}
         alt=""
-        width={24}
-        height={20}
+        {...MARK_SIZES[size]}
       />
       <span className={cn("text-brand", isDark ? "text-on-ink" : "text-ink")}>
         Nexo Assist

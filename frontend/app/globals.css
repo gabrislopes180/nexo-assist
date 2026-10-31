@@ -82,6 +82,7 @@
   --chat-gutter: 200px;
   --login-form-width: 380px;
   --login-preview-width: 500px;
+  --profile-width: 600px;
 
   /* Mapeamento para os nomes que os componentes do shadcn usam */
   --background: var(--paper);
@@ -103,6 +104,12 @@
   --input: var(--line-control);
   --ring: var(--cta);
   --radius: 8px;
+  --sidebar: var(--paper);
+  --sidebar-foreground: var(--ink);
+  --sidebar-accent: var(--desk);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--rule);
+  --sidebar-ring: var(--cta);
 }
 
 @theme inline {
@@ -178,6 +185,12 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 
   /* Fontes: font-ui (padrão) e font-display (só no login) */
   --font-sans: var(--font-ui-stack);

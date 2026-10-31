@@ -9,15 +9,19 @@ function run(path: string, cookie?: string) {
 }
 
 describe("proxy", () => {
-  it("deixa /login fora do matcher", () => {
-    expect(config.matcher).toEqual(["/", "/test"]);
+  it("cobre só as rotas autenticadas", () => {
+    expect(config.matcher).toEqual(["/", "/console/:path*", "/profile"]);
   });
 
   it.each([
     ["/", undefined],
-    ["/test", undefined],
+    ["/console", undefined],
+    ["/console/employee", undefined],
+    ["/profile", undefined],
     ["/", ""],
-    ["/test", ""],
+    ["/console", ""],
+    ["/console/employee", ""],
+    ["/profile", ""],
   ])("redireciona %s com cookie %j para /login", (path, cookie) => {
     const response = run(path, cookie);
 
@@ -27,16 +31,19 @@ describe("proxy", () => {
     );
   });
 
-  it("leva / com cookie para /test", () => {
-    const response = run("/", "qualquer-valor");
-
-    expect(response.headers.get("location")).toBe("http://localhost:3000/test");
+  it.each(["/", "/console"])("leva %s com cookie ao atendimento", (path) => {
+    expect(run(path, "qualquer-valor").headers.get("location")).toBe(
+      "http://localhost:3000/console/employee",
+    );
   });
 
-  it("deixa /test com cookie seguir", () => {
-    const response = run("/test", "qualquer-valor");
+  it.each(["/console/employee", "/profile"])(
+    "deixa %s com cookie seguir",
+    (path) => {
+      const response = run(path, "qualquer-valor");
 
-    expect(response.headers.get("location")).toBeNull();
-    expect(response.headers.get("x-middleware-next")).toBe("1");
-  });
+      expect(response.headers.get("location")).toBeNull();
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+    },
+  );
 });

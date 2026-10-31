@@ -24,9 +24,10 @@ frontend/
 ├── app/        Rotas do Next.js (App Router). Só arquivos que o Next exige.
 ├── pages/      Vazia de propósito (impede o Next de ler src/pages como rotas).
 ├── public/     Arquivos estáticos (public/brand: símbolo Nexo).
-├── proxy.ts    Redireciona / e /test pela presença do cookie de sessão. Não valida a sessão.
+├── proxy.ts    Redireciona /, /console e /profile pela presença do cookie de sessão. Não valida a sessão nem o papel: isso é do SessionGate.
 └── src/        Código da aplicação, organizado em camadas FSD.
     ├── app/       Providers, configuração global (QueryClient etc.)
+    ├── processes/ Layouts que atravessam várias telas (processes/layouts)
     ├── pages/     Telas montadas, uma por rota
     ├── widgets/   Blocos grandes e independentes de uma tela
     ├── features/  Ações do usuário com valor de negócio
@@ -50,11 +51,12 @@ export { ChatPage as default } from "@/pages/chat";
 
 ### Quem importa quem
 
-As camadas, de cima para baixo: `app` → `pages` → `widgets` → `features` → `entities` → `shared`.
+As camadas, de cima para baixo: `app` → `processes` → `pages` → `widgets` → `features` → `entities` → `shared`.
 
 - Uma camada só importa das camadas **abaixo** dela. Nunca de cima.
 - Slices da mesma camada não se importam entre si: uma feature não importa outra feature, um widget não importa outro widget.
 - `shared` não importa nada das outras camadas.
+- `processes` importa de `pages` para baixo. `pages` não importa `processes`: só as rotas da raiz `app/` usam essa camada.
 - Precisa compartilhar algo entre duas slices da mesma camada? Desça para a camada de baixo (normalmente `entities` ou `shared`) ou faça a composição na camada de cima.
 
 ### Public API
@@ -74,6 +76,8 @@ As camadas, de cima para baixo: `app` → `pages` → `widgets` → `features` �
 
 Crie só os segmentos que a slice usa.
 
+Exceção: `processes/layouts` mantém `sidebar.tsx`, `authenticated-layout.tsx` e `authenticated-shell.tsx` direto na raiz da slice, sem segmento `ui/`.
+
 ## Onde fica cada coisa no Nexo
 
 | Camada | Exemplos |
@@ -86,8 +90,9 @@ Crie só os segmentos que a slice usa.
 | `entities/message` | Tipos de mensagem e registro de transparência, UserMessage, AgentMessage, ConsoleMessage, SystemEvent |
 | `entities/session` | Usuário logado |
 | `features/` | `send-message`, `confirm-ticket-draft`, `select-ticket`, `takeover-conversation`, `return-to-agent`, `close-conversation`, `login` |
-| `widgets/` | `login-hero`, `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `app-sidebar`, `console-rail` |
-| `pages/` | `login`, `chat`, `console`, `profile` |
+| `widgets/` | `login-hero`, `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `console-rail` |
+| `processes/` | `layouts`: sidebar compartilhado e layout autenticado |
+| `pages/` | `login`, `employee-console`, `profile` |
 
 A tabela é um ponto de partida. Se algo não se encaixar, prefira a camada mais baixa que funcione e registre a decisão.
 

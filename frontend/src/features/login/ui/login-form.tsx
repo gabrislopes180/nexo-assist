@@ -5,12 +5,11 @@ import { ArrowRight, LockKeyhole, Mail } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { useSession } from "@/entities/session";
+import { homePathFor, useSession } from "@/entities/session";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { TextField } from "@/shared/ui/text-field";
 import { useLogin } from "../api/use-login";
-import { POST_LOGIN_PATH } from "../config/post-login-path";
 import {
   getLoginError,
   SESSION_NOT_KEPT_MESSAGE,
@@ -32,6 +31,7 @@ export function LoginForm() {
   const {
     control,
     handleSubmit,
+    reset,
     register,
     setError,
     formState: { errors },
@@ -42,9 +42,13 @@ export function LoginForm() {
     defaultValues: { email: "", password: "", keepConnected: true },
   });
 
+  // O Next mantém a rota anterior oculta no DOM: sem isto, a senha ficaria lá
+  // e voltaria preenchida depois de sair.
+  useEffect(() => () => reset(), [reset]);
+
   // O login grava o usuário na mesma chave, então os dois caminhos passam aqui.
   useEffect(() => {
-    if (sessionUser) router.replace(POST_LOGIN_PATH);
+    if (sessionUser) router.replace(homePathFor(sessionUser.role));
   }, [router, sessionUser]);
 
   const isBusy = isPending || Boolean(sessionUser);
