@@ -73,7 +73,7 @@ A versão completa e editável está em [`docs/architecture/system-design.drawio
 | Frontend | Next.js, TypeScript, Zod, React Hook Form, Zustand, TanStack Query, Feature-Sliced Design |
 | Backend | Express, TypeScript, Prisma, SQLite |
 | Agent | Mastra |
-| Modelo | _a definir_ |
+| Modelo | Google Gemini (`gemini-3.5-flash-lite`, pelo Google AI Studio) |
 
 ## Estrutura
 
@@ -92,11 +92,11 @@ nexo-assist/
 
 ## Como rodar
 
-Pré-requisito: Node.js 22+.
+Pré-requisito: Node.js 22.13+.
 
 ```bash
 cd backend
-cp .env.example .env   # variáveis descritas em "Autenticação"
+cp .env.example .env   # preencha LLM_API_KEY: sem ela a API não sobe (veja "Variáveis de ambiente")
 npm install            # também gera o Prisma Client
 npm run db:setup       # aplica as migrations, gera o client e popula com dados de demonstração
 npm run dev            # API em http://localhost:8000 (GET /health)
@@ -121,7 +121,7 @@ Outros comandos úteis (em `backend/`):
 
 | Comando | O que faz |
 |---|---|
-| `npm test` | Testes das regras de prazo e de chamados |
+| `npm test` | Testes de regras, serviços e rotas |
 | `npm run typecheck` | Checagem de tipos |
 | `npm run db:seed` | Recria os dados de demonstração (pode rodar quantas vezes quiser) |
 | `npm run db:migrate` | Cria e aplica uma nova migration após mudar o schema |
@@ -142,13 +142,46 @@ O login é simulado: o backend valida apenas se o e-mail existe e ignora a senha
 
 Erros seguem o formato `{ "error": { "code": "...", "message": "..." } }`.
 
-Variáveis de ambiente (`backend/.env`):
+## Chat
+
+`POST /chat` recebe a mensagem do funcionário e devolve a resposta do agent em JSON. Usa o cookie de sessão e aceita só usuários com papel `EMPLOYEE`.
+
+```json
+{ "message": "Cadê meu chamado?", "conversationId": "opcional" }
+```
+
+Sem `conversationId` cria uma conversa; com ele, continua. `message` tem de 1 a 2000 caracteres, e qualquer campo extra é recusado.
+
+| Código | `error.code` | Quando |
+|---|---|---|
+| `200` | | `{ conversation, message, ticketLookup }` |
+| `400` | `INVALID_REQUEST` | Body inválido |
+| `401` | `SESSION_MISSING`, `SESSION_INVALID` | Sem sessão válida |
+| `403` | `FORBIDDEN` | Usuário não é funcionário |
+| `404` | `CONVERSATION_NOT_FOUND` | Conversa inexistente ou de outro dono |
+| `409` | `CONVERSATION_MESSAGE_LIMIT_REACHED` | Conversa já tem 30 mensagens do funcionário; nada é gravado |
+| `409` | `CONVERSATION_CLOSED` | Conversa encerrada |
+| `409` | `CONVERSATION_NOT_WITH_AGENT` | Conversa transferida para um analista |
+| `503` | `AGENT_UNAVAILABLE` | Falha da LLM; o turno é desfeito |
+| `500` | `INTERNAL_ERROR` | Erro inesperado; o turno é desfeito |
+
+`ticketLookup` vem do serviço de chamados, nunca do texto do modelo, e é `null` quando nenhuma consulta rodou. A consulta só enxerga chamados abertos do dono da sessão.
+
+O seed traz conversas com ids fixos para demonstração: `seed-conv-closed` e `seed-conv-near-limit` (Marina) e `seed-conv-waiting` (Juliana). A `seed-conv-near-limit` tem 29 mensagens: a próxima é aceita e a seguinte recebe o `409`.
+
+## Variáveis de ambiente
+
+Em `backend/.env`:
 
 | Variável | Obrigatória | Descrição |
 |---|---|---|
 | `DATABASE_URL` | Sim | Banco SQLite, ex.: `file:./dev.db`. Caminho relativo: rode a API a partir de `backend/` |
 | `SESSION_SECRET` | Sim | Segredo que assina a sessão, com no mínimo 32 caracteres. O valor do `.env.example` é recusado em produção |
 | `CORS_ORIGINS` | Sim | Origens exatas do frontend, separadas por vírgula, sem `*` e sem barra final |
+| `LLM_API_KEY` | Sim | Chave do Google AI Studio usada pelo agent |
+| `AGENT_MODEL` | Não | Modelo no formato `provider/modelo`; o padrão é `google/gemini-3.5-flash-lite` |
+| `AGENT_TIMEOUT_MS` | Não | Limite do turno inteiro do agent, em milissegundos; o padrão é `120000` |
+| `TICKET_SERVICE_SIMULATION` | Não | `off` (padrão) ou `down`, que simula o serviço de chamados fora do ar. `down` é recusado em produção |
 | `NODE_ENV` | Não | `production` envia o cookie só por HTTPS (`Secure`) |
 | `PORT` | Não | Porta da API; o padrão é `8000` |
 

@@ -1,3 +1,4 @@
+import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
 import type { TicketType } from "../generated/prisma/enums.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
 import { agentTraceSchema } from "../shared/transparency.js";
@@ -11,7 +12,7 @@ import {
 } from "../tickets/ticket-rules.js";
 import { prisma, type DbTransaction } from "./prisma.js";
 import { ARTICLES } from "./seed-data/articles.js";
-import { buildConversations, type ConversationKey } from "./seed-data/conversations.js";
+import { buildConversations, NEAR_LIMIT_CONVERSATION_ID, type ConversationKey } from "./seed-data/conversations.js";
 import { buildTickets, type TicketSeed } from "./seed-data/tickets.js";
 import { USERS, type UserKey } from "./seed-data/users.js";
 
@@ -137,6 +138,7 @@ async function seed(tx: DbTransaction, now: Date) {
     check(first !== undefined && last !== undefined, `conversa ${c.key} sem mensagens`);
     const conversation = await tx.conversation.create({
       data: {
+        ...(c.id ? { id: c.id } : {}),
         ownerId: userId[c.ownerKey],
         status: c.status,
         analystId: idOf(c.analystKey),
@@ -290,6 +292,9 @@ async function verify(tx: DbTransaction, now: Date) {
       if (m.authorType === "AGENT" || m.authorType === "SYSTEM") check(m.authorId === null, `mensagem ${m.id}: autor deveria ser null`);
     }
   }
+
+  const nearLimit = conversations.find((c) => c.id === NEAR_LIMIT_CONVERSATION_ID);
+  check(nearLimit?.status === "WITH_AGENT" && nearLimit.messageCount === CONVERSATION_MESSAGE_LIMIT - 1, "conversa perto do limite divergente");
 
   const counters = await tx.ticketCounter.findMany();
   for (const type of ["INC", "REQ"] as const) {

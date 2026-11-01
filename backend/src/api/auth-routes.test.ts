@@ -5,6 +5,7 @@ import { after, before, describe, it } from "node:test";
 import { createApp, type AppDeps } from "../app.js";
 import { createAuthService, type AuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
+import type { ChatService } from "../chat/chat-service.js";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ApiConfig } from "./config.js";
@@ -18,8 +19,12 @@ const CLEARED = /^nexo_session=;/;
 
 const running: Server[] = [];
 
-async function start(deps: AppDeps): Promise<string> {
-  const server = createApp(deps).listen(0);
+const unusedChatService: ChatService = {
+  sendMessage: () => Promise.reject(new Error("chat não usado nestes testes")),
+};
+
+async function start(deps: Omit<AppDeps, "chatService">): Promise<string> {
+  const server = createApp({ ...deps, chatService: unusedChatService }).listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   running.push(server);
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -297,7 +302,8 @@ describe("rotas de autenticação", () => {
       const res = await postJson(`${brokenUrl}/auth/login`, { email: EMAIL, password: "senha-nao-logar" });
       await assertError(res, 500, "INTERNAL_ERROR", "Erro interno.");
       const output = JSON.stringify(logged.mock.calls.map((call) => call.arguments.map(String)));
-      assert.match(output, /falha do banco/);
+      assert.match(output, /Error/);
+      assert.equal(output.includes("falha do banco"), false);
       assert.equal(output.includes("conteudo-do-body"), false);
       assert.equal(output.includes("senha-nao-logar"), false);
     });

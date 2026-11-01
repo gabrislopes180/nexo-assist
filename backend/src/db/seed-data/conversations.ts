@@ -4,7 +4,10 @@ import { C2_HANDOFF_SUMMARY, C3_HANDOFF_SUMMARY } from "./tickets.js";
 import { ago, formatLocalDateTime } from "./time.js";
 import type { UserKey } from "./users.js";
 
-export type ConversationKey = "C1" | "C2" | "C3";
+export type ConversationKey = "C1" | "C2" | "C3" | "C4";
+
+/** Com 29 mensagens do funcionário: a próxima é a última aceita, e a seguinte é recusada. */
+export const NEAR_LIMIT_CONVERSATION_ID = "seed-conv-near-limit";
 
 export type MessageSeed = {
   at: Date;
@@ -16,6 +19,8 @@ export type MessageSeed = {
 
 export type ConversationSeed = {
   key: ConversationKey;
+  /** Id fixo, para roteiros de demonstração. Sem ele, o banco gera um cuid. */
+  id?: string;
   ownerKey: UserKey;
   status: ConversationStatus;
   analystKey?: UserKey;
@@ -27,6 +32,44 @@ export type ConversationSeed = {
   messages: MessageSeed[];
 };
 
+const NEAR_LIMIT_TOPICS = [
+  { question: "como troco minha senha de rede", answer: "No portal de autoatendimento, em Segurança, use a opção Trocar senha." },
+  { question: "qual é o prazo de um chamado de prioridade média", answer: "O prazo de um chamado de prioridade média é de 3 dias úteis." },
+  { question: "como configuro a assinatura do e-mail", answer: "No Outlook, abra Configurações, E-mail e depois Assinaturas." },
+  { question: "como peço acesso a uma pasta compartilhada", answer: "Peça pela abertura de um chamado do tipo REQ, categoria Acesso." },
+] as const;
+
+/** 29 perguntas respondidas, com um minuto entre cada mensagem. */
+function nearLimitMessages(t: (a: Parameters<typeof ago>[0]) => Date): MessageSeed[] {
+  const pairs = Array.from({ length: 29 }, (_, index) => index);
+  return pairs.flatMap((index): MessageSeed[] => {
+    const topic = NEAR_LIMIT_TOPICS[index % NEAR_LIMIT_TOPICS.length];
+    if (!topic) throw new Error("Tópico ausente");
+    const minutesAgo = 90 - index * 2;
+    return [
+      {
+        at: t({ minutes: minutesAgo }),
+        authorType: "EMPLOYEE",
+        authorKey: "marina",
+        content: `Dúvida ${index + 1}: ${topic.question}?`,
+      },
+      {
+        at: t({ minutes: minutesAgo - 1 }),
+        authorType: "AGENT",
+        authorKey: null,
+        content: topic.answer,
+        trace: {
+          understood: `A funcionária perguntou ${topic.question}.`,
+          intent: "QUESTION",
+          actions: [],
+          confidence: "HIGH",
+          reason: "Dúvida simples sobre um procedimento conhecido.",
+        },
+      },
+    ];
+  });
+}
+
 /**
  * Conversas da demo. `dueAtOf` devolve o prazo definido na criação do chamado,
  * usado no texto da confirmação do agent.
@@ -37,6 +80,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
   return [
     {
       key: "C1",
+      id: "seed-conv-closed",
       ownerKey: "marina",
       status: "CLOSED",
       closedAt: t({ hours: 1, minutes: 55 }),
@@ -86,6 +130,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
     },
     {
       key: "C2",
+      id: "seed-conv-waiting",
       ownerKey: "juliana",
       status: "WAITING_ANALYST",
       handoffReason: "CRITICAL",
@@ -215,6 +260,13 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           content: "Oi, Rafael! Vou acessar sua máquina remotamente para reconfigurar a VPN. Pode deixar o computador ligado?",
         },
       ],
+    },
+    {
+      key: "C4",
+      id: NEAR_LIMIT_CONVERSATION_ID,
+      ownerKey: "marina",
+      status: "WITH_AGENT",
+      messages: nearLimitMessages(t),
     },
   ];
 }

@@ -8,6 +8,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
+    "eval:agent": "tsx --env-file=.env src/agent/decisions.real.ts",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
@@ -22,6 +23,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@mastra/core": "^1.81.0",
     "@prisma/adapter-libsql": "^7.10.1",
     "@prisma/client": "^7.10.1",
     "cookie-parser": "^1.4.7",

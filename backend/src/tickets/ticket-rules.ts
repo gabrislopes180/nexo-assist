@@ -20,6 +20,8 @@ export const OPEN_STATUSES = [
   "APPROVED",
 ] as const satisfies readonly TicketStatus[];
 
+export type OpenTicketStatus = (typeof OPEN_STATUSES)[number];
+
 export function isOpen(ticket: { status: TicketStatus }): boolean {
   return (OPEN_STATUSES as readonly TicketStatus[]).includes(ticket.status);
 }

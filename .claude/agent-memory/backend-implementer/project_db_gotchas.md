@@ -15,6 +15,8 @@ metadata:
 - `prisma migrate reset` is blocked for AI agents; the seed (`npm run db:seed`) wipes and reinserts in one transaction, so it never needs a reset.
 - `src/db/prisma.ts` uses plain `dotenv/config` and does NOT call `resolveDatabaseUrl` (src/db/database-url.ts exists, tested but unused as of 2026-10-30), so `file:./dev.db` depends on cwd: run from backend/. From another cwd libsql silently creates an empty DB there and the boot `SELECT 1` still passes.
 - To validate the destructive seed safely: copy dev.db to the scratchpad and set `DATABASE_URL=file:///...copy.db` when running `tsx src/db/seed.ts` (dotenv does not override an existing env var).
-- libsql keeps the db file open on Windows after `$disconnect` (rmSync gives EBUSY), so tests should use `:memory:`.
+- libsql keeps the db file open on Windows after `$disconnect` (rmSync gives EBUSY). `:memory:` does NOT work with `$transaction`: libsql opens a new connection per transaction, which sees an empty db ("no such table"). `file::memory:?cache=shared` passes the tests but the process dies at exit with 0xC0000005 about 1 run in 4. So `createTestDatabase()` uses a temp file (old `nexo-test-*.db` swept after 1h).
+  **Why:** the shared-cache crash shows as a file-level failure with all subtests green and `exitCode: 3221225477`.
+  **How to apply:** keep the temp file; do not "simplify" back to memory. Check flakiness by repeating `npm test`, not one run.
 - Throwaway tsx scripts outside backend/ still need `.mts` (top-level await) and `file:///C:/...` import URLs on Windows; bare package imports (e.g. `@libsql/client`) don't resolve from %TEMP%, import by absolute file URL.
 - Seed timestamps are relative to `now`; overdue/on-time status is guaranteed via SLA_ELAPSED_BOUNDS_HOURS in src/tickets/sla.ts. See [[ticket-sla-rules]].

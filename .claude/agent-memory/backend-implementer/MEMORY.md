@@ -1,1 +1,1 @@
-- [DB gotchas](project_db_gotchas.md) — trigger error shows as P2003, table redefinition drops the trigger, no migrate reset, scratch scripts
+- [DB gotchas](project_db_gotchas.md) — trigger error shows as P2003, trigger loss, no migrate reset, tests need temp-file db (not :memory:)

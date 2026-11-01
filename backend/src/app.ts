@@ -2,6 +2,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { type Express } from "express";
 import { createAuthRouter } from "./api/auth-routes.js";
+import { createChatRouter } from "./api/chat-routes.js";
 import type { AppDeps } from "./api/deps.js";
 import { errorHandler, notFoundHandler } from "./api/errors.js";
 
@@ -26,6 +27,7 @@ export function createApp(deps: AppDeps): Express {
   });
 
   app.use("/auth", createAuthRouter(deps));
+  app.use("/chat", createChatRouter(deps));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

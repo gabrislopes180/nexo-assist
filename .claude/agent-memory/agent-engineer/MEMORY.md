@@ -1,0 +1,2 @@
+- [Cota do Gemini](project_gemini_free_tier_quota.md) — Free Tier com 20 req/dia por modelo; planeje medições e demonstração
+- [Pegadinhas do Mastra](project_mastra_agent_gotchas.md) — logger cru, doGenerate no mock, saída estruturada com tools, modelo padrão
