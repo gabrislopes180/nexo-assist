@@ -72,7 +72,7 @@ function byUrgency(now: Date) {
   };
 }
 
-function toSummary(ticket: MatchableTicket, now: Date): TicketSummary {
+export function toTicketSummary(ticket: MatchableTicket, now: Date): TicketSummary {
   return {
     code: ticket.code,
     type: ticket.type,
@@ -91,6 +91,6 @@ export function matchTickets(tickets: readonly MatchableTicket[], criteria: Tick
   const matches = [...selectMatches(tickets, criteria)].sort(byUrgency(now));
   return {
     totalMatches: matches.length,
-    tickets: matches.slice(0, MAX_LOOKUP_TICKETS).map((ticket) => toSummary(ticket, now)),
+    tickets: matches.slice(0, MAX_LOOKUP_TICKETS).map((ticket) => toTicketSummary(ticket, now)),
   };
 }

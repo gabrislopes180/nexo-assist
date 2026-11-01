@@ -8,11 +8,11 @@ import { createConversationService } from "./conversations/conversation-service.
 import { checkDatabaseConnection } from "./db/check-connection.js";
 import { prisma } from "./db/prisma.js";
 import { createTicketServiceFromEnv } from "./tickets/resilient-ticket-service.js";
-import { createTicketService, type TicketService } from "./tickets/ticket-service.js";
+import { createTicketService, type TicketCodeReader, type TicketService } from "./tickets/ticket-service.js";
 
 const PORT = Number(process.env.PORT) || 8000;
 
-type BootConfig = { api: ApiConfig; agent: AgentConfig; ticketService: TicketService };
+type BootConfig = { api: ApiConfig; agent: AgentConfig; ticketService: TicketService & TicketCodeReader };
 
 function readConfig(): BootConfig | null {
   try {
@@ -32,6 +32,7 @@ const config = readConfig();
 if (config && (await checkDatabaseConnection(prisma))) {
   const chatService = createChatService({
     conversations: createConversationService(prisma),
+    tickets: config.ticketService,
     agentRunner: createAgentRunner({
       model: config.agent.model,
       timeoutMs: config.agent.timeoutMs,

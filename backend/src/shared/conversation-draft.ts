@@ -39,9 +39,17 @@ export const reopenDraftSchema = z.strictObject({
   reason: z.string().min(1),
 });
 
-export const pendingDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, updateDraftSchema, reopenDraftSchema]);
+export const complementDraftSchema = z.strictObject({
+  ...draftBase,
+  kind: z.literal("COMPLEMENT"),
+  ticketCode,
+  content: z.string().min(1).max(2000),
+});
+
+export const pendingDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, updateDraftSchema, reopenDraftSchema, complementDraftSchema]);
 
 export type CreateDraft = z.infer<typeof createDraftSchema>;
 export type UpdateDraft = z.infer<typeof updateDraftSchema>;
 export type ReopenDraft = z.infer<typeof reopenDraftSchema>;
+export type ComplementDraft = z.infer<typeof complementDraftSchema>;
 export type PendingDraft = z.infer<typeof pendingDraftSchema>;

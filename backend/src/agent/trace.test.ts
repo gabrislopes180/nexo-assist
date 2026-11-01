@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { TicketLookupResult, TicketSummary } from "../shared/chat.js";
 import { agentTraceSchema } from "../shared/transparency.js";
-import { actionsFrom, citesOnlyKnownTickets, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
+import type { DraftExecution } from "./tools/turn-recorder.js";
+import { actionsFrom, citesOnlyKnownTickets, claimsFalseAction, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
 
 const ticket = (code: string, overrides: Partial<TicketSummary> = {}): TicketSummary => ({
   code,
@@ -37,7 +38,45 @@ const decision: LlmDecision = {
   reason: "Citou o código",
 };
 
-const compose = (input: Partial<ReplyInput>) => composeReply({ decision, fallbackText: "", executions: [], ...input });
+const compose = (input: Partial<ReplyInput>) => composeReply({ decision, fallbackText: "", executions: [], drafts: [], ...input });
+
+describe("claimsFalseAction", () => {
+  it("pega afirmações de ação feita", () => {
+    for (const text of [
+      "Complementei o chamado.",
+      "Adicionei a informação ao INC-1.",
+      "Incluí isso no chamado.",
+      "Registrei o seu pedido.",
+      "Atualizei o chamado.",
+      "Já atualizei tudo.",
+      "Pronto, acrescentei ao chamado.",
+      "O complemento foi registrado.",
+      "Seu complemento já está salvo.",
+      "Confirma o complemento?",
+      "Confira e confirme.",
+      "Preparei o complemento do chamado.",
+    ]) {
+      assert.equal(claimsFalseAction(text), true, text);
+    }
+  });
+
+  it("não acusa frase negativa", () => {
+    for (const text of ["Não atualizei o chamado.", "Ainda não registrei nada.", "Nada foi alterado: não adicionei o complemento.", "Eu nunca incluí isso."]) {
+      assert.equal(claimsFalseAction(text), false, text);
+    }
+  });
+
+  it("uma negação não protege outra frase", () => {
+    assert.equal(claimsFalseAction("Não atualizei o título, mas adicionei o complemento."), true);
+    assert.equal(claimsFalseAction("Não mudei nada. Registrei o pedido."), true);
+  });
+
+  it("não acusa orientação nem dado do chamado", () => {
+    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
+      assert.equal(claimsFalseAction(text), false, text);
+    }
+  });
+});
 
 describe("citesOnlyKnownTickets", () => {
   it("aceita texto sem código, com ou sem consulta", () => {
@@ -183,6 +222,115 @@ describe("composeReply", () => {
   it("texto vazio após a tool não produz resposta", () => {
     assert.equal(compose({ decision: null, fallbackText: "", executions: [single] }), null);
     assert.equal(compose({ decision: null, fallbackText: "", executions: [unavailable] }), null);
+  });
+
+  describe("complemento", () => {
+    const proposal = { kind: "COMPLEMENT" as const, ticket: ticket("INC-20311"), content: "Ele desliga sozinho." };
+    const drafted: DraftExecution = { outcome: "DRAFTED", proposal };
+    const notAvailable: DraftExecution = { outcome: "TICKET_NOT_AVAILABLE" };
+    const serviceDown: DraftExecution = { outcome: "SERVICE_UNAVAILABLE" };
+
+    it("com proposta, o texto é sempre o template com o código real", () => {
+      const reply = compose({ decision: { ...decision, content: "Adicionei ao INC-999!" }, drafts: [drafted] });
+      assert.equal(reply?.content, "Preparei o complemento do INC-20311. Confira e confirme.");
+      assert.equal(reply?.ticketDraft, proposal);
+      assert.equal(reply?.trace.intent, "COMPLEMENT");
+    });
+
+    it("registra draftComplement na ação do turno, nunca addTicketComplement", () => {
+      const reply = compose({ executions: [single], drafts: [drafted] });
+      assert.deepEqual(reply?.trace.actions.map((action) => action.tool), ["searchMyOpenTickets", "draftComplement"]);
+    });
+
+    it("com proposta, aproveita o turno mesmo sem texto do modelo", () => {
+      assert.equal(compose({ decision: null, fallbackText: "", drafts: [drafted] })?.ticketDraft, proposal);
+    });
+
+    it("vale a última proposta aceita", () => {
+      const other = { ...proposal, ticket: ticket("REQ-2") };
+      const reply = compose({ drafts: [drafted, { outcome: "DRAFTED", proposal: other }] });
+      assert.equal(reply?.ticketDraft, other);
+      assert.match(reply?.content ?? "", /REQ-2/);
+    });
+
+    it("chamado indisponível: sem rascunho, template que não afirma se existe", () => {
+      const reply = compose({ decision: { ...decision, content: "Esse chamado é da Juliana, confirma?" }, drafts: [notAvailable] });
+      assert.equal(reply?.ticketDraft, null);
+      assert.match(reply?.content ?? "", /não está entre os seus chamados abertos/);
+      assert.ok(!/juliana|resolvido|existe/i.test(reply?.content ?? ""));
+      assert.equal(reply?.trace.actions[0]?.status, "SKIPPED");
+      assert.equal(reply?.trace.confidence, "LOW");
+    });
+
+    it("serviço indisponível: sem rascunho e ação ERROR", () => {
+      const reply = compose({ drafts: [serviceDown] });
+      assert.equal(reply?.ticketDraft, null);
+      assert.match(reply?.content ?? "", /indisponível/);
+      assert.equal(reply?.trace.actions[0]?.status, "ERROR");
+    });
+
+    it("falsa ação sem proposta vira template, sem rascunho", () => {
+      const reply = compose({ decision: { ...decision, content: "Complementei o chamado.", understood: "Quer complementar" } });
+      assert.equal(reply?.ticketDraft, null);
+      assert.match(reply?.content ?? "", /nada foi alterado/i);
+      assert.equal(reply?.trace.confidence, "LOW");
+    });
+
+    it("pedir confirmação sem proposta vira template", () => {
+      assert.match(compose({ decision: { ...decision, content: "Confirma o complemento?" } })?.content ?? "", /nada foi alterado/i);
+    });
+
+    it("frase negativa passa pela guarda", () => {
+      assert.equal(compose({ decision: { ...decision, content: "Não atualizei o chamado." } })?.content, "Não atualizei o chamado.");
+    });
+
+    it("falsa ação no texto puro também é barrada", () => {
+      assert.match(compose({ decision: null, fallbackText: "Registrei o complemento." })?.content ?? "", /nada foi alterado/i);
+    });
+
+    it("fora de escopo descarta a proposta e não diz que preparou nada", () => {
+      const reply = compose({ decision: { ...decision, content: "Só ajudo com suporte.", intent: "OUT_OF_SCOPE" }, drafts: [drafted] });
+      assert.equal(reply?.ticketDraft, null);
+      assert.equal(reply?.content, "Só ajudo com suporte.");
+      assert.equal(reply?.trace.intent, "OUT_OF_SCOPE");
+    });
+
+    it("fora de escopo com falsa ação cai no template de escopo", () => {
+      const reply = compose({ decision: { ...decision, content: "Registrei isso.", intent: "OUT_OF_SCOPE" } });
+      assert.match(reply?.content ?? "", /suporte/);
+      assert.ok(!/nada foi alterado/i.test(reply?.content ?? ""));
+    });
+
+    it("sem proposta, a citação continua valendo", () => {
+      const reply = compose({ decision: { ...decision, content: "O INC-999 está aberto." } });
+      assert.equal(reply?.content, templateFor(null));
+    });
+  });
+
+  describe("intent OUT_OF_SCOPE com tool executada", () => {
+    const outOfScope: LlmDecision = { ...decision, content: "Só ajudo com suporte de TI e chamados.", intent: "OUT_OF_SCOPE" };
+
+    it("devolve ticketLookup null e mantém a ação no trace", () => {
+      const reply = compose({ decision: outOfScope, executions: [multiple] });
+      assert.equal(reply?.ticketLookup, null);
+      assert.equal(reply?.content, outOfScope.content);
+      assert.equal(reply?.trace.intent, "OUT_OF_SCOPE");
+      assert.deepEqual(reply?.trace.actions, actionsFrom([multiple]));
+    });
+
+    it("não troca a resposta pelo template da consulta", () => {
+      for (const execution of [noMatch, noOpen, unavailable]) {
+        assert.equal(compose({ decision: outOfScope, executions: [execution] })?.content, outOfScope.content);
+      }
+    });
+
+    it("recusa chamado citado, sem expor a lista", () => {
+      const reply = compose({ decision: { ...outOfScope, content: "Não sei, mas o INC-1 segue aberto." }, executions: [multiple] });
+      assert.equal(reply?.ticketLookup, null);
+      assert.equal(citesOnlyKnownTickets(reply?.content ?? "", null), true);
+      assert.match(reply?.content ?? "", /suporte/);
+      assert.equal(reply?.trace.confidence, "LOW");
+    });
   });
 
   it("em UNAVAILABLE ignora o texto da LLM", () => {

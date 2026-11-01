@@ -21,6 +21,8 @@ const running: Server[] = [];
 
 const unusedChatService: ChatService = {
   sendMessage: () => Promise.reject(new Error("chat não usado nestes testes")),
+  confirmDraft: () => Promise.reject(new Error("chat não usado nestes testes")),
+  cancelDraft: () => Promise.reject(new Error("chat não usado nestes testes")),
 };
 
 async function start(deps: Omit<AppDeps, "chatService">): Promise<string> {

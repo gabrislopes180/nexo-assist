@@ -98,6 +98,11 @@ describe("pendingDraftSchema", () => {
     assert.equal(pendingDraftSchema.safeParse(draft).success, false);
   });
 
+  it("aceita COMPLEMENT e recusa conteúdo vazio", () => {
+    assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "COMPLEMENT", ticketCode: "INC-1", content: "c" }).success, true);
+    assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "COMPLEMENT", ticketCode: "INC-1", content: "" }).success, false);
+  });
+
   it("aceita UPDATE e REOPEN", () => {
     assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "UPDATE", ticketCode: "INC-20311", comment: "c" }).success, true);
     assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "REOPEN", ticketCode: "INC-20150", reason: "voltou" }).success, true);

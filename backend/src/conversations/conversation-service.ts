@@ -1,7 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
+import type { ProposedTicketDraft, TicketSummary } from "../shared/chat.js";
+import type { ComplementDraft } from "../shared/conversation-draft.js";
 import type { AgentTrace } from "../shared/transparency.js";
-import { CONVERSATION_MESSAGE_LIMIT } from "./conversation-rules.js";
+import { CONVERSATION_MESSAGE_LIMIT, ConversationNotWithAgentError } from "./conversation-rules.js";
+import { cancelComplement, confirmComplement, readComplementDraft, type StoredAgentMessage } from "./ticket-draft.js";
 
 export class ConversationNotFoundError extends Error {
   constructor() {
@@ -24,12 +28,7 @@ export class ConversationClosedError extends Error {
   }
 }
 
-export class ConversationNotWithAgentError extends Error {
-  constructor() {
-    super("Conversa não está com o agent");
-    this.name = "ConversationNotWithAgentError";
-  }
-}
+export { ConversationNotWithAgentError };
 
 export type HistoryAuthorType = Extract<MessageAuthorType, "EMPLOYEE" | "AGENT" | "ANALYST">;
 export type HistoryMessage = { authorType: HistoryAuthorType; content: string };
@@ -44,12 +43,24 @@ export type TurnReservation = {
   history: HistoryMessage[];
 };
 
-export type StoredAgentMessage = { id: string; content: string; trace: AgentTrace; createdAt: Date };
+export type { StoredAgentMessage };
+
+export type AgentReply = {
+  content: string;
+  trace: AgentTrace;
+  /** Sem rascunho, o anterior continua valendo; um novo o substitui. */
+  ticketDraft?: ProposedTicketDraft | null;
+  now: Date;
+};
 
 export type ConversationService = {
   startTurn(ownerId: string, input: { conversationId?: string; content: string; now: Date }): Promise<TurnReservation>;
-  completeTurn(reservation: TurnReservation, reply: { content: string; trace: AgentTrace; now: Date }): Promise<StoredAgentMessage>;
+  /** Grava resposta e rascunho na mesma transação: turno que falha não deixa rascunho. */
+  completeTurn(reservation: TurnReservation, reply: AgentReply): Promise<StoredAgentMessage & { draftId: string | null }>;
   abortTurn(reservation: TurnReservation): Promise<void>;
+  readDraft(ownerId: string, draftId: string): Promise<ComplementDraft>;
+  confirmDraft(ownerId: string, draftId: string, content: string, now: Date): Promise<{ message: StoredAgentMessage; ticket: TicketSummary }>;
+  cancelDraft(ownerId: string, draftId: string, now: Date): Promise<{ message: StoredAgentMessage }>;
 };
 
 const HISTORY_LIMIT = 20;
@@ -156,15 +167,39 @@ export function createConversationService(client: PrismaClient): ConversationSer
       );
     },
 
-    completeTurn({ conversationId }, { content, trace, now }) {
+    completeTurn({ conversationId }, { content, trace, ticketDraft, now }) {
+      const draft: ComplementDraft | null = ticketDraft
+        ? {
+            draftId: randomUUID(),
+            createdAt: now.toISOString(),
+            kind: ticketDraft.kind,
+            ticketCode: ticketDraft.ticket.code,
+            content: ticketDraft.content,
+          }
+        : null;
       return client.$transaction(async (tx) => {
         const message = await tx.message.create({
           data: { conversationId, authorType: "AGENT", authorId: null, content, trace, createdAt: now },
           select: { id: true, createdAt: true },
         });
-        await tx.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: now } });
-        return { id: message.id, content, trace, createdAt: message.createdAt };
+        await tx.conversation.update({
+          where: { id: conversationId },
+          data: { lastMessageAt: now, ...(draft ? { pendingDraft: draft, pendingDraftId: draft.draftId } : {}) },
+        });
+        return { id: message.id, content, trace, createdAt: message.createdAt, draftId: draft?.draftId ?? null };
       });
+    },
+
+    readDraft(ownerId, draftId) {
+      return readComplementDraft(client, ownerId, draftId);
+    },
+
+    confirmDraft(ownerId, draftId, content, now) {
+      return client.$transaction((tx) => confirmComplement(tx, { ownerId, draftId, content, now }));
+    },
+
+    cancelDraft(ownerId, draftId, now) {
+      return client.$transaction((tx) => cancelComplement(tx, { ownerId, draftId, now }));
     },
 
     async abortTurn(reservation) {

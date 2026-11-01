@@ -1,7 +1,7 @@
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { TicketStatus } from "../generated/prisma/enums.js";
-import type { TicketLookupCriteria, TicketLookupResult } from "../shared/chat.js";
-import { matchTickets, type MatchableTicket } from "./ticket-matching.js";
+import type { TicketLookupCriteria, TicketLookupResult, TicketSummary } from "../shared/chat.js";
+import { matchTickets, toTicketSummary, type MatchableTicket } from "./ticket-matching.js";
 import { isOpen, OPEN_STATUSES, type OpenTicketStatus } from "./ticket-rules.js";
 
 /** A futura tool converte este erro no resultado `UNAVAILABLE`. */
@@ -17,7 +17,15 @@ export type TicketService = {
   lookupOpenTickets(ownerId: string, criteria: TicketLookupCriteria, now: Date): Promise<TicketLookupResult>;
 };
 
-const matchableTicketSelect = {
+/**
+ * Leitura com escopo de dono, para validar um chamado por código. Null para chamado
+ * inexistente, resolvido ou de outro dono: quem chama não distingue os casos.
+ */
+export type TicketCodeReader = {
+  findOpenTicketByCode(ownerId: string, code: string, now: Date): Promise<TicketSummary | null>;
+};
+
+export const matchableTicketSelect = {
   code: true,
   type: true,
   category: true,
@@ -29,12 +37,20 @@ const matchableTicketSelect = {
   dueAt: true,
 } as const;
 
-function isOpenTicket<T extends { status: TicketStatus }>(ticket: T): ticket is T & { status: OpenTicketStatus } {
+export function isOpenTicket<T extends { status: TicketStatus }>(ticket: T): ticket is T & { status: OpenTicketStatus } {
   return isOpen(ticket);
 }
 
-export function createTicketService(client: Pick<PrismaClient, "ticket">): TicketService {
+export function createTicketService(client: Pick<PrismaClient, "ticket">): TicketService & TicketCodeReader {
   return {
+    async findOpenTicketByCode(ownerId, code, now) {
+      const ticket = await client.ticket.findFirst({
+        where: { ownerId, code: code.toUpperCase(), status: { in: [...OPEN_STATUSES] } },
+        select: matchableTicketSelect,
+      });
+      return ticket && isOpenTicket(ticket) ? toTicketSummary(ticket, now) : null;
+    },
+
     async lookupOpenTickets(ownerId, criteria, now) {
       const rows = await client.ticket.findMany({
         where: { ownerId, status: { in: [...OPEN_STATUSES] } },

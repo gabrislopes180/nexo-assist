@@ -3,7 +3,7 @@ import { MastraLanguageModelV2Mock } from "@mastra/core/test-utils/llm-mock";
 /** Roteiro de um passo do modelo: testes de decisão não dependem da LLM real. */
 export type FakeStep =
   | { kind: "text"; text: string; finishReason?: "stop" | "length" }
-  | { kind: "tool"; input: Record<string, unknown> }
+  | { kind: "tool"; input: Record<string, unknown>; toolName?: string }
   | { kind: "error"; error: Error }
   /** Só termina quando o `abortSignal` da chamada dispara. */
   | { kind: "hang" }
@@ -17,7 +17,7 @@ type CallOptions = Parameters<MastraLanguageModelV2Mock["doGenerate"]>[0];
 function resultOf(step: Extract<FakeStep, { kind: "text" | "tool" }>, callIndex: number) {
   if (step.kind === "tool") {
     return {
-      content: [{ type: "tool-call" as const, toolCallId: `call-${callIndex}`, toolName: "searchMyOpenTickets", input: JSON.stringify(step.input) }],
+      content: [{ type: "tool-call" as const, toolCallId: `call-${callIndex}`, toolName: step.toolName ?? "searchMyOpenTickets", input: JSON.stringify(step.input) }],
       finishReason: "tool-calls" as const,
       usage: USAGE,
       warnings: [],

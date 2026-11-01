@@ -5,7 +5,7 @@ import { describeErrorForLog } from "../shared/safe-error.js";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.js";
 import { STRUCTURED_OUTPUT_INSTRUCTIONS } from "./instructions.js";
 import { createNexoAgent, type NexoAgentDeps } from "./nexo-agent.js";
-import { createTurnRecorder, type TurnContextValues } from "./tools/search-my-open-tickets.js";
+import { createTurnRecorder, type TurnContextValues } from "./tools/turn-recorder.js";
 import { composeReply, llmDecisionSchema, parseDecision } from "./trace.js";
 
 const MAX_STEPS = 4;
@@ -71,6 +71,7 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
           decision: parseDecision(output.object, output.text),
           fallbackText: output.text,
           executions: recorder.all(),
+          drafts: recorder.drafts(),
         });
         if (!reply) throw new AgentUnavailableError();
         return reply;

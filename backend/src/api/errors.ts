@@ -9,7 +9,9 @@ import {
   ConversationNotWithAgentError,
 } from "../conversations/conversation-service.js";
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
+import { DraftNotFoundError, TicketNotOpenError } from "../conversations/ticket-draft.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
+import { TicketServiceUnavailableError } from "../tickets/ticket-service.js";
 
 export class ApiError extends Error {
   constructor(
@@ -42,7 +44,15 @@ const DOMAIN_ERRORS = [
     type: ConversationNotWithAgentError,
     status: 409,
     code: "CONVERSATION_NOT_WITH_AGENT",
-    message: "Esta conversa foi transferida para um analista.",
+    message: "Esta conversa não está mais com o assistente.",
+  },
+  { type: DraftNotFoundError, status: 404, code: "DRAFT_NOT_FOUND", message: "Rascunho não encontrado." },
+  { type: TicketNotOpenError, status: 409, code: "TICKET_NOT_OPEN", message: "Este chamado não está mais aberto." },
+  {
+    type: TicketServiceUnavailableError,
+    status: 503,
+    code: "TICKET_SERVICE_UNAVAILABLE",
+    message: "O serviço de chamados está indisponível no momento. Tente novamente em instantes.",
   },
   {
     type: AgentUnavailableError,

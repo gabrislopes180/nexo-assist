@@ -165,6 +165,28 @@ Sem `conversationId` cria uma conversa; com ele, continua. `message` tem de 1 a 
 | `503` | `AGENT_UNAVAILABLE` | Falha da LLM; o turno é desfeito |
 | `500` | `INTERNAL_ERROR` | Erro inesperado; o turno é desfeito |
 
+### Complemento de chamado
+
+O agent nunca grava no chamado: ele propõe um rascunho, que chega em `ticketDraft` no envelope de `POST /chat` (`{ id, kind: "COMPLEMENT", ticket, content }`, ou `null` se o turno não propôs nenhum). Cada conversa guarda um rascunho: um novo substitui o anterior.
+
+| Rota | Body | Resposta de sucesso |
+|---|---|---|
+| `POST /chat/drafts/:id/confirm` | `{ "content": string }`, de 1 a 2000 caracteres | `200` com `{ message, ticket }` |
+| `POST /chat/drafts/:id/cancel` | vazio | `200` com `{ message }` |
+
+O `content` confirmado é o que vale, então a pessoa pode ajustar o texto. Ele vira um comentário no histórico do chamado e não altera a descrição original, o status nem o prazo. As duas rotas exigem sessão de funcionário, não chamam o modelo e não contam no limite de 30 mensagens.
+
+| Código | `error.code` | Quando |
+|---|---|---|
+| `400` | `INVALID_REQUEST` | Body inválido |
+| `401` | `SESSION_MISSING`, `SESSION_INVALID` | Sem sessão válida |
+| `403` | `FORBIDDEN` | Usuário não é funcionário |
+| `404` | `DRAFT_NOT_FOUND` | Rascunho inexistente, já usado ou de outro dono |
+| `409` | `TICKET_NOT_OPEN` | Chamado resolvido; o rascunho é mantido |
+| `409` | `CONVERSATION_NOT_WITH_AGENT` | Conversa fora do agent; o rascunho é mantido |
+| `503` | `TICKET_SERVICE_UNAVAILABLE` | Só na confirmação; o rascunho é mantido e pode tentar de novo |
+| `500` | `INTERNAL_ERROR` | Erro inesperado; nada é gravado e o rascunho é mantido |
+
 `ticketLookup` vem do serviço de chamados, nunca do texto do modelo, e é `null` quando nenhuma consulta rodou. A consulta só enxerga chamados abertos do dono da sessão.
 
 O seed traz conversas com ids fixos para demonstração: `seed-conv-closed` e `seed-conv-near-limit` (Marina) e `seed-conv-waiting` (Juliana). A `seed-conv-near-limit` tem 29 mensagens: a próxima é aceita e a seguinte recebe o `409`.

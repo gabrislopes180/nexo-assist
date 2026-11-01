@@ -3,14 +3,14 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { TicketStatus } from "../generated/prisma/enums.js";
-import { createTicketService, type TicketService } from "./ticket-service.js";
+import { createTicketService, type TicketCodeReader, type TicketService } from "./ticket-service.js";
 
 const NOW = new Date("2026-11-01T12:00:00.000Z");
 const hoursFromNow = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
 
 describe("TicketService", () => {
   let client: PrismaClient;
-  let service: TicketService;
+  let service: TicketService & TicketCodeReader;
   let ownerId: string;
   let otherOwnerId: string;
 
@@ -95,6 +95,24 @@ describe("TicketService", () => {
     assert.equal(result.tickets[0]?.dueAt, null);
     assert.equal(result.tickets[0]?.overdue, false);
     assert.equal(result.tickets[0]?.statusLabel, "Aguardando funcionário");
+  });
+
+  describe("findOpenTicketByCode", () => {
+    it("devolve o resumo do chamado aberto do dono, sem diferenciar caixa", async () => {
+      await createTicket(ownerId, "INC-1", "WAITING_EMPLOYEE", null);
+      const ticket = await service.findOpenTicketByCode(ownerId, "inc-1", NOW);
+      assert.equal(ticket?.code, "INC-1");
+      assert.equal(ticket?.statusLabel, "Aguardando funcionário");
+      assert.equal(ticket && "description" in ticket, false);
+    });
+
+    it("não devolve chamado resolvido, de outro dono ou inexistente", async () => {
+      await createTicket(ownerId, "INC-1", "RESOLVED", null);
+      await createTicket(otherOwnerId, "INC-2", "IN_PROGRESS", hoursFromNow(1));
+      assert.equal(await service.findOpenTicketByCode(ownerId, "INC-1", NOW), null);
+      assert.equal(await service.findOpenTicketByCode(ownerId, "INC-2", NOW), null);
+      assert.equal(await service.findOpenTicketByCode(ownerId, "INC-3", NOW), null);
+    });
   });
 
   it("devolve MULTIPLE_MATCHES só com chamados abertos do dono, com total real acima do corte", async () => {

@@ -1,5 +1,5 @@
 import type { HistoryMessage } from "../conversations/conversation-service.js";
-import type { TicketLookupResult } from "../shared/chat.js";
+import type { ProposedTicketDraft, TicketLookupResult } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
 
 /** Fronteira entre o chat e o agent: a API não conhece o Mastra. */
@@ -15,6 +15,8 @@ export type AgentTurnResult = {
   trace: AgentTrace;
   /** Resultado do serviço de chamados, nunca extraído do texto da LLM. */
   ticketLookup: TicketLookupResult | null;
+  /** Proposta da tool, que não grava nada. O ChatService revalida o chamado, e o `completeTurn` persiste. */
+  ticketDraft?: ProposedTicketDraft | null;
 };
 
 export type AgentRunner = {

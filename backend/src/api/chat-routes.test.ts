@@ -13,6 +13,7 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus } from "../generated/prisma/enums.js";
 import type { ChatResponse, TicketLookupResult } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
+import { createTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
@@ -136,7 +137,7 @@ describe("POST /chat", () => {
       completeTurn: (reservation, message) =>
         completeTurnFailure ? Promise.reject(completeTurnFailure) : real.completeTurn(reservation, message),
     };
-    const chatService = createChatService({ conversations, agentRunner: agent.runner });
+    const chatService = createChatService({ conversations, agentRunner: agent.runner, tickets: createTicketService(client) });
     server = createApp({ config, authService: createAuthService(client), chatService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -162,7 +163,7 @@ describe("POST /chat", () => {
       assert.equal(res.headers.get("cache-control"), "no-store");
       const body = (await res.json()) as ChatResponse;
 
-      assert.deepEqual(Object.keys(body).sort(), ["conversation", "message", "ticketLookup"]);
+      assert.deepEqual(Object.keys(body).sort(), ["conversation", "message", "ticketDraft", "ticketLookup"]);
       assert.deepEqual(body.conversation, {
         id: body.conversation.id,
         status: "WITH_AGENT",
@@ -175,6 +176,7 @@ describe("POST /chat", () => {
       assert.deepEqual(body.message.trace, TRACE);
       assert.equal(new Date(body.message.createdAt).toISOString(), body.message.createdAt);
       assert.equal(body.ticketLookup, null);
+      assert.equal(body.ticketDraft, null);
 
       const messages = await client.message.findMany({ where: { conversationId: body.conversation.id }, orderBy: { createdAt: "asc" } });
       assert.deepEqual(messages.map((m) => [m.authorType, m.content]), [

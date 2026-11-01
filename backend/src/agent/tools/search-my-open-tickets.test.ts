@@ -3,13 +3,8 @@ import { describe, it } from "node:test";
 import { RequestContext } from "@mastra/core/request-context";
 import { ticketLookupCriteriaSchema, type TicketLookupCriteria, type TicketLookupResult } from "../../shared/chat.js";
 import { TicketServiceUnavailableError, type TicketService } from "../../tickets/ticket-service.js";
-import {
-  createSearchMyOpenTicketsTool,
-  createTurnRecorder,
-  searchTickets,
-  type TurnContextValues,
-  type TurnRecorder,
-} from "./search-my-open-tickets.js";
+import { createSearchMyOpenTicketsTool, searchTickets } from "./search-my-open-tickets.js";
+import { createTurnRecorder, type TurnContextValues, type TurnRecorder } from "./turn-recorder.js";
 
 const NOW = new Date("2026-11-01T12:00:00.000Z");
 const NO_MATCH: TicketLookupResult = { outcome: "NO_MATCH", openTicketCount: 3, totalMatches: 0, tickets: [] };

@@ -2,32 +2,11 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import { ticketLookupCriteriaSchema, ticketLookupResultSchema, type TicketLookupCriteria, type TicketLookupResult } from "../../shared/chat.js";
 import { TicketServiceUnavailableError, type TicketService } from "../../tickets/ticket-service.js";
+import type { TurnContextValues } from "./turn-recorder.js";
 
 export const SEARCH_MY_OPEN_TICKETS_TOOL = "searchMyOpenTickets";
 
 const UNAVAILABLE: TicketLookupResult = { outcome: "UNAVAILABLE", openTicketCount: null, totalMatches: null, tickets: [] };
-
-/** Guarda o que a tool executou de fato: `ticketLookup` e `trace.actions` saem daqui, não do texto da LLM. */
-export type TurnRecorder = {
-  record(result: TicketLookupResult): void;
-  all(): readonly TicketLookupResult[];
-  /** Com várias chamadas no turno, vale a última. */
-  last(): TicketLookupResult | undefined;
-};
-
-export function createTurnRecorder(): TurnRecorder {
-  const executions: TicketLookupResult[] = [];
-  return {
-    record: (result) => {
-      executions.push(result);
-    },
-    all: () => executions,
-    last: () => executions.at(-1),
-  };
-}
-
-/** Valores por turno. O dono vem daqui e da sessão, nunca da entrada da tool. */
-export type TurnContextValues = { actorId: string; actorName: string; recorder: TurnRecorder };
 
 type ToolDeps = { ticketService: TicketService; now?: () => Date };
 
