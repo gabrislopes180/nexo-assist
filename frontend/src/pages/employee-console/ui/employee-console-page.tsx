@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { SessionGate } from "@/entities/session";
 import { StatusBadge } from "@/shared/ui/status-badge";
 import { TopBar } from "@/shared/ui/top-bar";
-import { ChatComposer } from "@/widgets/chat-composer";
+import { EmployeeChatSession } from "./employee-chat-session";
 
 export const metadata: Metadata = {
   title: "Atendimento | Nexo Assist",
@@ -17,10 +17,7 @@ export function EmployeeConsolePage() {
           Assistente online
         </StatusBadge>
       </TopBar>
-      <div className="flex-1" />
-      <div className="px-4 pb-4.5 xl:px-(--chat-gutter)">
-        <ChatComposer />
-      </div>
+      <EmployeeChatSession />
     </SessionGate>
   );
 }

@@ -6,4 +6,5 @@ Status sempre com ponto **e** palavra, em três formatos: `dot` em linhas e card
 - `dot` usa texto `ink-3`. Com `strong`, o texto fica na cor do tom e com peso 500 (status no topo do card de chamado).
 - `pill` usa o fundo `*-soft` com o texto `*-text`: "Assistente online", "Disponível", e "Aguardando atendente" com `icon="bot"`.
 - `tag` identifica quem escreveu no console: "IA" (`info`) e a equipe do analista, como "Suporte N2" (`success`).
+- `pulse` faz o ponto pulsar, só para o que está acontecendo agora ("Analisando seu pedido…"). Com movimento reduzido, o ponto fica parado e o texto permanece.
 - O consumidor fornece `tone` e o texto. Nunca use só o ponto, sem palavra.

@@ -114,7 +114,10 @@ Os componentes ficam em `window.NexoAssist` e precisam do React 18 na página. S
 - Erro de campo no `TextField`: borda `danger`, ícone e mensagem em `danger-text`.
 - Faixa de erro do login: `danger-soft` com `danger-text` e `radius-md`.
 - Estado de envio do botão: só troca o rótulo ("Entrando") e tira a seta.
-- Chat vazio: nenhum estado vazio está definido no protótipo. A área da conversa fica em branco, sem conteúdo de exemplo, e o composer mostra "0/30 mensagens nesta sessão".
+- Chat vazio: nenhum estado vazio está definido no protótipo. A área da conversa fica em branco, sem conteúdo de exemplo, e o composer mostra "0/30 mensagens nesta conversa".
+- Espera do agent: a linha da trilha com "Nexo Assist" e um `StatusBadge` `info` com ponto pulsante ("Analisando seu pedido…"), sem bolha. Depois de 10 s, o texto muda para "Ainda estou trabalhando nisso…".
+- Falha de envio: linha em `caption` `danger-text` sob a bolha do funcionário, que não muda de cor, com "Tentar de novo" quando repetir faz sentido.
+- Composer bloqueado no chat: aviso neutro e "Iniciar nova conversa" no lugar do contador (ver `components/Composer.md`).
 - `profile-width`: coluna da página Meu perfil, medida em `screens/06-meu-perfil.png`.
 - `on-ink-surface`, `login-form-width` e `login-preview-width`: valores medidos em `screens/01-login.png`. A borda do card de prévia e a bolha do agent reaproveitam `on-ink-rule`.
 

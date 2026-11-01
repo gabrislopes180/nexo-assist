@@ -22,6 +22,10 @@ export default function createNextConfig(phase: string): NextConfig {
   return {
     cacheComponents: true,
     partialPrefetching: true,
+    experimental: {
+      // O agent tem até 120 s; o padrão de 30 s cortaria o turno no meio.
+      proxyTimeout: 130_000,
+    },
     turbopack: {
       rules: {
         "*.css": {

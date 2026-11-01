@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ApiError } from "./api-error";
 
-const REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 15_000;
 
 const backendErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
@@ -11,6 +11,7 @@ interface ApiRequestOptions<T> {
   method?: "GET" | "POST";
   body?: unknown;
   schema: z.ZodType<T>;
+  timeoutMs?: number;
 }
 
 interface RawResponse {
@@ -23,6 +24,7 @@ async function send(
   path: string,
   method: "GET" | "POST",
   body: unknown,
+  timeoutMs: number,
 ): Promise<RawResponse> {
   try {
     const response = await fetch(`/api${path}`, {
@@ -30,7 +32,7 @@ async function send(
       headers:
         body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     // Lido aqui para o timeout valer também durante a leitura do corpo.
     const text = await response.text();
@@ -50,9 +52,14 @@ function parseJson(text: string): unknown {
 
 export async function apiRequest<T>(
   path: string,
-  { method = "GET", body, schema }: ApiRequestOptions<T>,
+  {
+    method = "GET",
+    body,
+    schema,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  }: ApiRequestOptions<T>,
 ): Promise<T> {
-  const { ok, status, text } = await send(path, method, body);
+  const { ok, status, text } = await send(path, method, body, timeoutMs);
   const payload = parseJson(text);
 
   if (!ok) {

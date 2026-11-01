@@ -104,6 +104,15 @@ describe("apiRequest", () => {
     expect(timeout).toHaveBeenCalledWith(15_000);
   });
 
+  it("usa o timeoutMs informado no lugar do padrão", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    stubFetch(200, '{"ok":true}');
+
+    await apiRequest("/x", { schema, timeoutMs: 125_000 });
+
+    expect(timeout).toHaveBeenCalledWith(125_000);
+  });
+
   it("classifica 200 fora do schema como invalid-response", async () => {
     stubFetch(200, '{"ok":"sim"}');
 

@@ -34,11 +34,20 @@ const TONES = {
   },
 } as const;
 
+export type StatusTone = keyof typeof TONES;
+
+/** Cor do ponto de um tom, para pontos fora do badge (prioridade no cartão). */
+export function statusDotClass(tone: StatusTone): string {
+  return TONES[tone].dot;
+}
+
 interface StatusBadgeProps {
-  tone: keyof typeof TONES;
+  tone: StatusTone;
   variant?: "dot" | "pill";
   /** Na variante `dot`, pinta o texto na cor do tom, com peso 500. */
   strong?: boolean;
+  /** Ponto pulsante, para o que está acontecendo agora. */
+  pulse?: boolean;
   children: ReactNode;
 }
 
@@ -46,6 +55,7 @@ export function StatusBadge({
   tone,
   variant = "dot",
   strong = false,
+  pulse = false,
   children,
 }: StatusBadgeProps) {
   const { dot, pill, strong: strongText } = TONES[tone];
@@ -61,7 +71,15 @@ export function StatusBadge({
         !isPill && strong && cn("font-medium", strongText),
       )}
     >
-      <span aria-hidden="true" className={cn("size-1.75 rounded-pill", dot)} />
+      <span
+        aria-hidden="true"
+        className={cn(
+          "rounded-pill",
+          isPill ? "size-1.75" : "size-1.5",
+          pulse && "motion-safe:animate-pulse",
+          dot,
+        )}
+      />
       {children}
     </span>
   );
