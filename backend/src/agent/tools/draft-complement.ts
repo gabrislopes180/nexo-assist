@@ -1,16 +1,18 @@
 import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { proposedTicketDraftSchema, ticketLookupCriteriaSchema } from "../../shared/chat.js";
+import { proposedComplementDraftSchema, ticketLookupCriteriaSchema } from "../../shared/chat.js";
 import { TicketServiceUnavailableError, type TicketCodeReader } from "../../tickets/ticket-service.js";
 import type { DraftExecution, TurnContextValues } from "./turn-recorder.js";
+
+type ProposedComplementDraft = z.infer<typeof proposedComplementDraftSchema>;
 
 export const DRAFT_COMPLEMENT_TOOL = "draftComplement";
 
 /** Sem campo de usuário: o dono vem da sessão. */
 export const draftComplementInputSchema = z.strictObject({
   code: ticketLookupCriteriaSchema.shape.code.unwrap(),
-  content: proposedTicketDraftSchema.shape.content,
+  content: proposedComplementDraftSchema.shape.content,
 });
 
 export type DraftComplementInput = z.infer<typeof draftComplementInputSchema>;
@@ -24,9 +26,11 @@ const draftComplementOutputSchema = z.discriminatedUnion("outcome", [
 
 export type DraftComplementOutput = z.infer<typeof draftComplementOutputSchema>;
 
+type ComplementExecution = Extract<DraftExecution, { outcome: "TICKET_NOT_AVAILABLE" | "SERVICE_UNAVAILABLE" }> | { outcome: "DRAFTED"; proposal: ProposedComplementDraft };
+
 type ToolDeps = { ticketService: TicketCodeReader; now?: () => Date };
 
-async function propose({ ticketService, now = () => new Date() }: ToolDeps, ownerId: string, { code, content }: DraftComplementInput): Promise<DraftExecution> {
+async function propose({ ticketService, now = () => new Date() }: ToolDeps, ownerId: string, { code, content }: DraftComplementInput): Promise<ComplementExecution> {
   try {
     const ticket = await ticketService.findOpenTicketByCode(ownerId, code, now());
     if (!ticket) return { outcome: "TICKET_NOT_AVAILABLE" };
@@ -44,7 +48,7 @@ export async function draftComplement(
   context: RequestContext<TurnContextValues> | undefined,
 ): Promise<DraftComplementOutput> {
   const ownerId = context?.get("actorId");
-  const execution: DraftExecution = ownerId ? await propose(deps, ownerId, input) : { outcome: "SERVICE_UNAVAILABLE" };
+  const execution: ComplementExecution = ownerId ? await propose(deps, ownerId, input) : { outcome: "SERVICE_UNAVAILABLE" };
   context?.get("recorder")?.recordDraft(execution);
   return execution.outcome === "DRAFTED" ? { outcome: "DRAFTED", code: execution.proposal.ticket.code } : execution;
 }

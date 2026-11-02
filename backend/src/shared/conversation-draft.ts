@@ -13,16 +13,27 @@ const draftBase = {
 
 const ticketCode = z.string().regex(/^(INC|REQ)-\d+$/);
 
+/** Texto vindo de fora. NUL truncaria o valor gravado no SQLite. */
+export function boundedText(max: number) {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine((text) => !text.includes("\u0000"));
+}
+
 export const createDraftSchema = z.strictObject({
   ...draftBase,
   kind: z.literal("CREATE"),
   type: z.enum(TicketType),
   category: z.enum(TicketCategory),
   priority: z.enum(TicketPriority),
-  title: z.string().min(1),
-  description: z.string().min(1),
+  priorityReason: boundedText(500),
+  title: boundedText(120),
+  description: boundedText(2000),
   affectedScope: z.enum(AffectedScope),
-  affectedDescription: z.string().min(1).optional(),
+  affectedDescription: boundedText(500).optional(),
 });
 
 export const updateDraftSchema = z.strictObject({
@@ -48,6 +59,10 @@ export const complementDraftSchema = z.strictObject({
 
 export const pendingDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, updateDraftSchema, reopenDraftSchema, complementDraftSchema]);
 
+/** Os kinds que já têm confirmação; os outros não existem para as rotas de rascunho. */
+export const confirmableDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, complementDraftSchema]);
+
+export type ConfirmableDraft = z.infer<typeof confirmableDraftSchema>;
 export type CreateDraft = z.infer<typeof createDraftSchema>;
 export type UpdateDraft = z.infer<typeof updateDraftSchema>;
 export type ReopenDraft = z.infer<typeof reopenDraftSchema>;

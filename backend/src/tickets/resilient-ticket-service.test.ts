@@ -6,7 +6,7 @@ import {
   createTicketServiceFromEnv,
   createUnavailableTicketService,
 } from "./resilient-ticket-service.js";
-import { TicketServiceUnavailableError, type TicketCodeReader, type TicketService } from "./ticket-service.js";
+import { TicketServiceUnavailableError, type FullTicketService } from "./ticket-service.js";
 
 const NOW = new Date("2026-11-01T12:00:00.000Z");
 const RESULT: TicketLookupResult = { outcome: "NO_OPEN_TICKETS", openTicketCount: 0, totalMatches: 0, tickets: [] };
@@ -15,8 +15,10 @@ const FAST = { timeoutMs: 20, attempts: 2, retryDelayMs: 1 };
 /** Cada chamada executa o próximo passo do roteiro e conta as tentativas. */
 function scripted(...steps: Array<() => Promise<TicketLookupResult>>) {
   const calls: unknown[][] = [];
-  const service: TicketService & TicketCodeReader = {
+  const service: FullTicketService = {
     findOpenTicketByCode: () => Promise.reject(new Error("não usado aqui")),
+    findSimilarTickets: () => Promise.reject(new Error("não usado aqui")),
+    ensureAvailable: () => Promise.reject(new Error("não usado aqui")),
     lookupOpenTickets(...args) {
       calls.push(args);
       const step = steps[calls.length - 1];
@@ -104,6 +106,22 @@ describe("findOpenTicketByCode resiliente", () => {
     const { service } = scripted();
     const simulated = createTicketServiceFromEnv(service, { TICKET_SERVICE_SIMULATION: "down" }, FAST);
     await assert.rejects(simulated.findOpenTicketByCode("dono", "INC-1", NOW), TicketServiceUnavailableError);
+  });
+});
+
+describe("leituras novas resilientes", () => {
+  it("findSimilarTickets e ensureAvailable viram erro tipado ao esgotar as tentativas", async () => {
+    const { service } = scripted();
+    const resilient = createResilientTicketService(service, FAST);
+    await assert.rejects(resilient.findSimilarTickets("dono", ["a"], NOW), TicketServiceUnavailableError);
+    await assert.rejects(resilient.ensureAvailable(), TicketServiceUnavailableError);
+  });
+
+  it("com a simulação down ficam indisponíveis", async () => {
+    const { service } = scripted();
+    const simulated = createTicketServiceFromEnv(service, { TICKET_SERVICE_SIMULATION: "down" }, FAST);
+    await assert.rejects(simulated.findSimilarTickets("dono", ["a"], NOW), TicketServiceUnavailableError);
+    await assert.rejects(simulated.ensureAvailable(), TicketServiceUnavailableError);
   });
 });
 

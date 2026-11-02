@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-const ticketPrioritySchema = z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
-const ticketCategorySchema = z.enum([
+export const ticketPrioritySchema = z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
+export const ticketCategorySchema = z.enum([
   "ACCESS",
   "NETWORK_VPN",
   "HARDWARE",
@@ -16,9 +16,11 @@ const ticketStatusSchema = z.enum([
   "APPROVED",
 ]);
 
+export const ticketTypeSchema = z.enum(["INC", "REQ"]);
+
 export const ticketSummarySchema = z.object({
   code: z.string().min(1),
-  type: z.enum(["INC", "REQ"]),
+  type: ticketTypeSchema,
   category: ticketCategorySchema,
   priority: ticketPrioritySchema,
   status: ticketStatusSchema,

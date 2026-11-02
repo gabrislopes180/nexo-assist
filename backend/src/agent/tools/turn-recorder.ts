@@ -1,10 +1,14 @@
-import type { ProposedTicketDraft, TicketLookupResult } from "../../shared/chat.js";
+import type { ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../../shared/chat.js";
 
+/** Execuções de `draftComplement` e `draftTicket`, na ordem em que aconteceram. */
 export type DraftExecution =
   | { outcome: "DRAFTED"; proposal: ProposedTicketDraft }
   /** Inexistente, resolvido ou de outro dono: o agent não pode distinguir. */
   | { outcome: "TICKET_NOT_AVAILABLE" }
-  | { outcome: "SERVICE_UNAVAILABLE" };
+  | { outcome: "SERVICE_UNAVAILABLE" }
+  | { outcome: "NEEDS_AFFECTED_SCOPE" }
+  | { outcome: "POSSIBLE_DUPLICATE"; similar: SimilarTicket[] }
+  | { outcome: "UNAVAILABLE" };
 
 /** Guarda o que as tools executaram de fato: `ticketLookup`, `ticketDraft` e `trace.actions` saem daqui, não do texto da LLM. */
 export type TurnRecorder = {
@@ -33,4 +37,12 @@ export function createTurnRecorder(): TurnRecorder {
 }
 
 /** Valores por turno. O dono vem daqui e da sessão, nunca da entrada das tools. */
-export type TurnContextValues = { actorId: string; actorName: string; recorder: TurnRecorder };
+export type TurnContextValues = {
+  actorId: string;
+  actorName: string;
+  /** Mensagem atual: a resposta rápida de afetados vale mais que o escopo escolhido pelo modelo. */
+  message: string;
+  /** Códigos já citados pelo agent na conversa: só eles podem ser reconhecidos como parecidos. */
+  shownCodes: readonly string[];
+  recorder: TurnRecorder;
+};

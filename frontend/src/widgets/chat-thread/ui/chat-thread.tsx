@@ -1,14 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AgentMessage, AgentWaiting, UserMessage } from "@/entities/message";
+import {
+  AgentMessage,
+  AgentWaiting,
+  QuickReplies,
+  UserMessage,
+} from "@/entities/message";
 import {
   TicketCard,
+  TicketDraftCard,
   TicketSelector,
+  type DraftValues,
   type TicketLookup,
   type TicketSummary,
 } from "@/entities/ticket";
-import type { ChatItem } from "@/features/send-message";
+import type { ChatItem, DraftOp } from "@/features/send-message";
 import { Button } from "@/shared/ui/button";
 
 const WAITING_TEXT = "Analisando seu pedido…";
@@ -20,8 +27,16 @@ interface ChatThreadProps {
   items: ChatItem[];
   isPending: boolean;
   lockedOut: boolean;
+  /** No limite de mensagens, o rascunho ainda pode ser confirmado. */
+  draftsLocked: boolean;
   onRetry: () => void;
   onSelectTicket: (agentItemId: string, ticket: TicketSummary) => void;
+  onSelectReply: (agentItemId: string, text: string) => void;
+  draftOp: DraftOp | null;
+  onConfirmDraft: (agentItemId: string) => void;
+  onCancelDraft: (agentItemId: string) => void;
+  onRetryDraft: (agentItemId: string) => void;
+  onEditDraft: (agentItemId: string, values: DraftValues) => void;
 }
 
 function lookupAttachment(
@@ -51,8 +66,15 @@ export function ChatThread({
   items,
   isPending,
   lockedOut,
+  draftsLocked,
   onRetry,
   onSelectTicket,
+  onSelectReply,
+  draftOp,
+  onConfirmDraft,
+  onCancelDraft,
+  onRetryDraft,
+  onEditDraft,
 }: ChatThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -162,21 +184,53 @@ export function ChatThread({
                 );
               }
 
-              const canSelect =
-                isLast &&
-                !isPending &&
-                !lockedOut &&
-                item.selectedCode === null;
+              // Turno ou ação de rascunho em andamento: nada mais é clicável.
+              const isIdle = !isPending && draftOp === null && !lockedOut;
+              const canAnswer = isLast && isIdle;
+              const { draft } = item;
+              const attachment = draft ? (
+                <TicketDraftCard
+                  draft={draft.data}
+                  values={draft.values}
+                  status={draft.status}
+                  failureLine={draft.failure?.line ?? null}
+                  canRetry={draft.failure?.retryable === true}
+                  interactive={
+                    !isPending && draftOp === null && !draftsLocked
+                  }
+                  busyAction={
+                    draftOp?.itemId === item.id ? draftOp.action : null
+                  }
+                  onConfirm={() => onConfirmDraft(item.id)}
+                  onCancel={() => onCancelDraft(item.id)}
+                  onRetry={() => onRetryDraft(item.id)}
+                  onSave={(values) => onEditDraft(item.id, values)}
+                />
+              ) : item.ticket ? (
+                <TicketCard ticket={item.ticket} />
+              ) : (
+                lookupAttachment(
+                  item.lookup,
+                  item.selectedCode,
+                  canAnswer && item.selectedCode === null,
+                  (ticket) => onSelectTicket(item.id, ticket),
+                )
+              );
               return (
                 <AgentMessage
                   key={item.id}
                   steps={item.steps}
-                  attachment={lookupAttachment(
-                    item.lookup,
-                    item.selectedCode,
-                    canSelect,
-                    (ticket) => onSelectTicket(item.id, ticket),
-                  )}
+                  replies={
+                    item.quickReplies ? (
+                      <QuickReplies
+                        options={item.quickReplies}
+                        selected={item.selectedReply}
+                        interactive={canAnswer && item.selectedReply === null}
+                        onSelect={(text) => onSelectReply(item.id, text)}
+                      />
+                    ) : undefined
+                  }
+                  attachment={attachment}
                 >
                   {item.content}
                 </AgentMessage>

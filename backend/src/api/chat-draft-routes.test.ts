@@ -12,7 +12,7 @@ import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft, TicketSummary } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
-import { createTicketService, TicketServiceUnavailableError, type TicketCodeReader } from "../tickets/ticket-service.js";
+import { createTicketService, TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
@@ -43,7 +43,7 @@ describe("rotas de rascunho do chat", () => {
     });
   }
 
-  const confirm = (id: string, content: unknown = "Texto confirmado", cookie?: string) => post(`/chat/drafts/${id}/confirm`, { content }, cookie);
+  const confirm = (id: string, content: unknown = "Texto confirmado", cookie?: string) => post(`/chat/drafts/${id}/confirm`, { kind: "COMPLEMENT", content }, cookie);
   const cancel = (id: string, cookie?: string) => post(`/chat/drafts/${id}/cancel`, undefined, cookie);
 
   async function assertError(res: Response, status: number, code: string) {
@@ -88,8 +88,9 @@ describe("rotas de rascunho do chat", () => {
     assert.ok(found);
     summary = found;
 
-    const tickets: TicketCodeReader = {
+    const tickets: TicketCodeReader & TicketAvailability = {
       findOpenTicketByCode: (...args) => (ticketsDown ? Promise.reject(new TicketServiceUnavailableError()) : real.findOpenTicketByCode(...args)),
+      ensureAvailable: () => real.ensureAvailable(),
     };
     const agentRunner: AgentRunner = {
       runTurn: () => {
@@ -129,7 +130,7 @@ describe("rotas de rascunho do chat", () => {
       const tampered = { ...proposal(), ticket: { ...summary, code: CODE.toLowerCase(), title: "Título inventado" } };
       respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: tampered });
       const body = (await (await post("/chat", { message: "complementa" })).json()) as ChatResponse;
-      assert.deepEqual(body.ticketDraft?.ticket, summary);
+      assert.deepEqual(body.ticketDraft?.kind === "COMPLEMENT" && body.ticketDraft.ticket, summary);
       assert.ok(body.ticketDraft);
       assert.equal((await confirm(body.ticketDraft.id)).status, 200);
     });
@@ -142,6 +143,12 @@ describe("rotas de rascunho do chat", () => {
       const body = (await res.json()) as ChatResponse;
       assert.equal(body.ticketDraft, null);
       assert.equal(await client.conversation.count({ where: { pendingDraftId: { not: null } } }), 0);
+      assert.doesNotMatch(body.message.content, /Confirma/);
+      assert.match(body.message.content, /nada foi (preparado|registrado)/i);
+      assert.deepEqual(body.message.trace.actions.at(-1)?.status, "SKIPPED");
+      const stored = await client.message.findUniqueOrThrow({ where: { id: body.message.id } });
+      assert.equal(stored.content, body.message.content);
+      assert.deepEqual(stored.trace, body.message.trace);
     });
 
     it("descarta a proposta com o serviço de chamados indisponível, sem derrubar o turno", async () => {
@@ -149,7 +156,11 @@ describe("rotas de rascunho do chat", () => {
       respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: proposal() });
       const res = await post("/chat", { message: "complementa" });
       assert.equal(res.status, 200);
-      assert.equal(((await res.json()) as ChatResponse).ticketDraft, null);
+      const body = (await res.json()) as ChatResponse;
+      assert.equal(body.ticketDraft, null);
+      assert.doesNotMatch(body.message.content, /Confirma/);
+      assert.match(body.message.content, /tente novamente/i);
+      assert.deepEqual(body.message.trace.actions.at(-1)?.status, "ERROR");
     });
 
     it("devolve ticketDraft null sem rascunho no turno", async () => {
@@ -239,11 +250,12 @@ describe("rotas de rascunho do chat", () => {
     });
 
     const invalid: [string, unknown][] = [
-      ["sem content", {}],
-      ["content vazio", { content: "   " }],
-      ["content longo", { content: "a".repeat(2001) }],
-      ["content com NUL", { content: "a\u0000b" }],
-      ["campo extra", { content: "a", ticketCode: "INC-1" }],
+      ["sem kind", { content: "a" }],
+      ["sem content", { kind: "COMPLEMENT" }],
+      ["content vazio", { kind: "COMPLEMENT", content: "   " }],
+      ["content longo", { kind: "COMPLEMENT", content: "a".repeat(2001) }],
+      ["content com NUL", { kind: "COMPLEMENT", content: "a\u0000b" }],
+      ["campo extra", { kind: "COMPLEMENT", content: "a", ticketCode: "INC-1" }],
     ];
     for (const [name, body] of invalid) {
       it(`responde 400 para ${name}`, async () => {
@@ -256,10 +268,10 @@ describe("rotas de rascunho do chat", () => {
       const res = await fetch(`${url}/chat/drafts/${draftId}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: "x" }),
+        body: JSON.stringify({ kind: "COMPLEMENT", content: "x" }),
       });
       await assertError(res, 401, "SESSION_MISSING");
-      await assertError(await post(`/chat/drafts/${draftId}/confirm`, { content: "x" }, "nexo_session=lixo"), 401, "SESSION_INVALID");
+      await assertError(await post(`/chat/drafts/${draftId}/confirm`, { kind: "COMPLEMENT", content: "x" }, "nexo_session=lixo"), 401, "SESSION_INVALID");
       await assertError(await confirm(draftId, "x", analystCookie), 403, "FORBIDDEN");
       assert.equal(await client.ticketEvent.count(), 0);
     });

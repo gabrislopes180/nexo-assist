@@ -20,8 +20,11 @@ function statementsOf(sql: string): string[] {
 
 /**
  * Banco em arquivo temporário, um por chamada. Não dá para usar `:memory:`: o libsql abre uma
- * conexão nova a cada transação, e ela veria um banco vazio. Com `?cache=shared` funciona, mas
- * o processo morre ao encerrar no Windows (0xC0000005), mesmo com os testes passando.
+ * conexão nova a cada transação, e ela veria um banco vazio.
+ *
+ * Limitação conhecida: arquivos que usam transação às vezes terminam com 0xC0000005 (exit 139 ou
+ * 3221225477), com todos os subtestes verdes. A queda vem do libsql ao encerrar o processo, não
+ * dos testes. `process.exit` no `beforeExit` e `?cache=shared` não resolvem.
  */
 function createTestDatabaseFile(): string {
   removeStaleTestDatabases();

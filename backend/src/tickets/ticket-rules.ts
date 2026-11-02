@@ -1,5 +1,6 @@
 import type {
   ActorType,
+  AffectedScope,
   TicketCategory,
   TicketEventType,
   TicketPriority,
@@ -64,6 +65,11 @@ export const TICKET_TYPE_LABEL: Record<TicketType, string> = {
   INC: "Incidente",
   REQ: "Requisição",
 };
+
+/** `CRITICAL` exige impacto coletivo; problema de uma pessoa só fica em `HIGH`. */
+export function capPriority(priority: TicketPriority, affectedScope: AffectedScope): TicketPriority {
+  return priority === "CRITICAL" && affectedScope === "INDIVIDUAL" ? "HIGH" : priority;
+}
 
 /** Ordem de urgência: CRITICAL > HIGH > MEDIUM > LOW (menor índice = mais urgente). */
 const PRIORITY_URGENCY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const satisfies readonly TicketPriority[];

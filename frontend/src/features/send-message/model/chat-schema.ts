@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { conversationSchema } from "@/entities/conversation";
 import { agentMessageSchema } from "@/entities/message";
-import { ticketLookupSchema } from "@/entities/ticket";
+import {
+  ticketDraftSchema,
+  ticketLookupSchema,
+  ticketSummarySchema,
+} from "@/entities/ticket";
 
 export const CHAT_MESSAGE_MAX_LENGTH = 2000;
 
@@ -11,13 +15,37 @@ export const chatMessageSchema = z
   .transform((text) => text.replaceAll("\0", ""))
   .pipe(z.string().trim().min(1).max(CHAT_MESSAGE_MAX_LENGTH));
 
+// Ausente vale como null: os campos chegaram depois e são opcionais na UI.
+const nullable = <T extends z.ZodType>(schema: T) =>
+  schema.nullish().transform((value) => value ?? null);
+
 export const chatResponseSchema = z.object({
   conversation: conversationSchema,
   message: agentMessageSchema,
   ticketLookup: ticketLookupSchema.nullable(),
+  ticketDraft: nullable(ticketDraftSchema),
+  // Só um atalho de digitação: fora do formato, some sem derrubar o turno.
+  quickReplies: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .transform((options) => [...new Set(options)])
+    .nullish()
+    .catch(null)
+    .transform((value) => value ?? null),
+});
+
+export const confirmDraftResponseSchema = z.object({
+  message: agentMessageSchema,
+  ticket: ticketSummarySchema,
+});
+
+export const cancelDraftResponseSchema = z.object({
+  message: agentMessageSchema,
 });
 
 export type ChatResponse = z.infer<typeof chatResponseSchema>;
+export type ConfirmDraftResponse = z.infer<typeof confirmDraftResponseSchema>;
+export type CancelDraftResponse = z.infer<typeof cancelDraftResponseSchema>;
 
 export type ParsedChatMessage =
   | { status: "ok"; message: string }

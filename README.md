@@ -165,20 +165,38 @@ Sem `conversationId` cria uma conversa; com ele, continua. `message` tem de 1 a 
 | `503` | `AGENT_UNAVAILABLE` | Falha da LLM; o turno é desfeito |
 | `500` | `INTERNAL_ERROR` | Erro inesperado; o turno é desfeito |
 
-### Complemento de chamado
+O envelope traz também `quickReplies`: atalhos de resposta, ou `null`.
 
-O agent nunca grava no chamado: ele propõe um rascunho, que chega em `ticketDraft` no envelope de `POST /chat` (`{ id, kind: "COMPLEMENT", ticket, content }`, ou `null` se o turno não propôs nenhum). Cada conversa guarda um rascunho: um novo substitui o anterior.
+### Rascunhos: complementar e abrir chamado
+
+O agent nunca grava no chamado: ele propõe um rascunho, que chega em `ticketDraft` no envelope de `POST /chat`, ou `null` se o turno não propôs nenhum. Cada conversa guarda um rascunho: um novo substitui o anterior. Se o backend não conseguir validar um complemento, a proposta é descartada e a resposta passa a dizer isso.
+
+| `kind` | Campos de `ticketDraft`, além de `id` |
+|---|---|
+| `COMPLEMENT` | `ticket`, `content` |
+| `CREATE` | `type`, `category`, `priority`, `title`, `description`, `affectedScope`, `affectedDescription` (opcional), `dueAtPreview` |
 
 | Rota | Body | Resposta de sucesso |
 |---|---|---|
-| `POST /chat/drafts/:id/confirm` | `{ "content": string }`, de 1 a 2000 caracteres | `200` com `{ message, ticket }` |
+| `POST /chat/drafts/:id/confirm` | Depende do `kind`, abaixo | `200` com `{ message, ticket }` |
 | `POST /chat/drafts/:id/cancel` | vazio | `200` com `{ message }` |
 
-O `content` confirmado é o que vale, então a pessoa pode ajustar o texto. Ele vira um comentário no histórico do chamado e não altera a descrição original, o status nem o prazo. As duas rotas exigem sessão de funcionário, não chamam o modelo e não contam no limite de 30 mensagens.
+```json
+{ "kind": "COMPLEMENT", "content": "texto de 1 a 2000 caracteres" }
+```
+
+```json
+{ "kind": "CREATE", "title": "até 120", "description": "até 2000", "affectedScope": "INDIVIDUAL | TEAM | COMPANY", "affectedDescription": "opcional" }
+```
+
+- **Complemento:** o `content` confirmado é o que vale, então a pessoa pode ajustar o texto. Ele vira um comentário no histórico do chamado e não altera a descrição original, o status nem o prazo.
+- **Abertura:** só título, descrição e afetados são editáveis. Tipo, categoria e prioridade ficam como no rascunho, e o prazo real conta da hora da confirmação. A prioridade `CRITICAL` exige escopo `TEAM` ou `COMPANY`: com `INDIVIDUAL`, o chamado fica `HIGH`.
+
+As duas rotas exigem sessão de funcionário, não chamam o modelo e não contam no limite de 30 mensagens. Cancelar não consome número de chamado.
 
 | Código | `error.code` | Quando |
 |---|---|---|
-| `400` | `INVALID_REQUEST` | Body inválido |
+| `400` | `INVALID_REQUEST` | Body inválido, ou `kind` diferente do rascunho |
 | `401` | `SESSION_MISSING`, `SESSION_INVALID` | Sem sessão válida |
 | `403` | `FORBIDDEN` | Usuário não é funcionário |
 | `404` | `DRAFT_NOT_FOUND` | Rascunho inexistente, já usado ou de outro dono |

@@ -163,7 +163,7 @@ describe("POST /chat", () => {
       assert.equal(res.headers.get("cache-control"), "no-store");
       const body = (await res.json()) as ChatResponse;
 
-      assert.deepEqual(Object.keys(body).sort(), ["conversation", "message", "ticketDraft", "ticketLookup"]);
+      assert.deepEqual(Object.keys(body).sort(), ["conversation", "message", "quickReplies", "ticketDraft", "ticketLookup"]);
       assert.deepEqual(body.conversation, {
         id: body.conversation.id,
         status: "WITH_AGENT",

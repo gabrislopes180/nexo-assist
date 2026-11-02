@@ -86,6 +86,13 @@ export function computeDueAt(priority: TicketPriority, from: Date): Date {
     : addBusinessMinutes(from, rule.minutes);
 }
 
+/** "16/11 às 15:00" no horário de São Paulo, independente do fuso da máquina. */
+export function formatLocalDateTime(date: Date): string {
+  const local = new Date(date.getTime() + BUSINESS_UTC_OFFSET_MINUTES * 60_000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(local.getUTCDate())}/${pad(local.getUTCMonth() + 1)} às ${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
+}
+
 export function isOverdue(ticket: { dueAt: Date | null }, now: Date): boolean {
   return ticket.dueAt !== null && ticket.dueAt < now;
 }

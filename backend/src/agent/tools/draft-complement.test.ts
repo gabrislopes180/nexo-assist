@@ -96,7 +96,7 @@ describe("draftComplement", () => {
     await draftComplement({ ticketService }, { code: "REQ-1", content: "Outro texto." }, context);
     assert.equal(recorder.drafts().length, 2);
     const last = recorder.drafts().at(-1);
-    assert.equal(last?.outcome === "DRAFTED" ? last.proposal.ticket.code : null, "REQ-1");
+    assert.equal(last?.outcome === "DRAFTED" && last.proposal.kind === "COMPLEMENT" ? last.proposal.ticket.code : null, "REQ-1");
   });
 
   it("a tool expõe o mesmo contrato pelo execute do Mastra", async () => {

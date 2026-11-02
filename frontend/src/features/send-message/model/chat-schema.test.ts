@@ -99,6 +99,44 @@ describe("chatResponseSchema", () => {
     expect(parsed.ticketLookup?.outcome).toBe("NO_MATCH");
   });
 
+  it("aceita rascunho e respostas rápidas", () => {
+    const parsed = chatResponseSchema.parse({
+      ...response,
+      ticketDraft: {
+        id: "d1",
+        kind: "CREATE",
+        type: "INC",
+        category: "NETWORK_VPN",
+        priority: "HIGH",
+        title: "VPN",
+        description: "Erro 809.",
+        affectedScope: "INDIVIDUAL",
+        dueAtPreview: "2026-10-20T16:43:00.000Z",
+      },
+      quickReplies: ["Só eu", "Minha equipe"],
+    });
+
+    expect(parsed.ticketDraft?.kind).toBe("CREATE");
+    expect(parsed.quickReplies).toEqual(["Só eu", "Minha equipe"]);
+  });
+
+  it("trata rascunho e respostas rápidas ausentes como null", () => {
+    const parsed = chatResponseSchema.parse(response);
+
+    expect(parsed.ticketDraft).toBeNull();
+    expect(parsed.quickReplies).toBeNull();
+  });
+
+  it("ignora respostas rápidas fora do formato e remove repetidas", () => {
+    expect(
+      chatResponseSchema.parse({ ...response, quickReplies: ["", 3] }).quickReplies,
+    ).toBeNull();
+    expect(
+      chatResponseSchema.parse({ ...response, quickReplies: ["Só eu", "Só eu"] })
+        .quickReplies,
+    ).toEqual(["Só eu"]);
+  });
+
   it("recusa status de conversa desconhecido", () => {
     const invalid = {
       ...response,

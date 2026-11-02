@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { TicketLookupResult, TicketSummary } from "../shared/chat.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import type { DraftExecution } from "./tools/turn-recorder.js";
-import { actionsFrom, citesOnlyKnownTickets, claimsFalseAction, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
+import { actionsFrom, CONFIRMATION_REPLY, citesOnlyKnownTickets, claimsFalseAction, isBareConfirmation, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
 
 const ticket = (code: string, overrides: Partial<TicketSummary> = {}): TicketSummary => ({
   code,
@@ -38,7 +38,49 @@ const decision: LlmDecision = {
   reason: "Citou o código",
 };
 
-const compose = (input: Partial<ReplyInput>) => composeReply({ decision, fallbackText: "", executions: [], drafts: [], ...input });
+const compose = (input: Partial<ReplyInput>) => composeReply({ message: "", decision, fallbackText: "", executions: [], drafts: [], ...input });
+
+describe("isBareConfirmation", () => {
+  it("reconhece confirmação curta", () => {
+    for (const message of [
+      "confirmo",
+      "Confirmo.",
+      "CONFIRMO!",
+      "pode confirmar",
+      "Pode confirmar, por favor",
+      "ok, confirma",
+      "Ok confirmado",
+      "sim, confirmo",
+      "confirmo o complemento",
+      "confirmo sim",
+      "já confirmei",
+      "Já confirmei, pode gravar",
+    ]) {
+      assert.equal(isBareConfirmation(message), true, message);
+    }
+  });
+
+  it("não confunde frase com conteúdo", () => {
+    for (const message of [
+      "confirmo que o problema continua no INC-20311",
+      "Confirmo que ele desliga sozinho",
+      "o chamado confirma o erro",
+      "não confirmo",
+      "posso confirmar?",
+      "como eu confirmo?",
+      "confirmo o INC-20311",
+      "Quero acrescentar no INC-20311 que confirmo o defeito",
+    ]) {
+      assert.equal(isBareConfirmation(message), false, message);
+    }
+  });
+
+  it("exige uma palavra de confirmação", () => {
+    for (const message of ["ok", "sim", "pode", "por favor", "", "   "]) {
+      assert.equal(isBareConfirmation(message), false, message);
+    }
+  });
+});
 
 describe("claimsFalseAction", () => {
   it("pega afirmações de ação feita", () => {
@@ -55,6 +97,10 @@ describe("claimsFalseAction", () => {
       "Confirma o complemento?",
       "Confira e confirme.",
       "Preparei o complemento do chamado.",
+      "Criei o chamado.",
+      "Abri um chamado para você.",
+      "Registrei o chamado.",
+      "Seu chamado foi criado.",
     ]) {
       assert.equal(claimsFalseAction(text), true, text);
     }
@@ -72,7 +118,7 @@ describe("claimsFalseAction", () => {
   });
 
   it("não acusa orientação nem dado do chamado", () => {
-    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
+    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "O chamado foi criado em 28/10.", "Abri o notebook e nada.", "Quer abrir um chamado?", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
       assert.equal(claimsFalseAction(text), false, text);
     }
   });
@@ -222,6 +268,39 @@ describe("composeReply", () => {
   it("texto vazio após a tool não produz resposta", () => {
     assert.equal(compose({ decision: null, fallbackText: "", executions: [single] }), null);
     assert.equal(compose({ decision: null, fallbackText: "", executions: [unavailable] }), null);
+  });
+
+  describe("mensagem que é só confirmação", () => {
+    const proposal = { kind: "COMPLEMENT" as const, ticket: ticket("INC-20311"), content: "Texto." };
+
+    it("devolve o template, sem lookup, e mantém a tool real no trace", () => {
+      const reply = compose({ message: "Confirmo", decision: { ...decision, content: "Veja seus chamados." }, executions: [multiple] });
+      assert.equal(reply?.content, CONFIRMATION_REPLY);
+      assert.equal(reply?.ticketLookup, null);
+      assert.deepEqual(reply?.trace.actions, actionsFrom([multiple]));
+      assert.equal(agentTraceSchema.safeParse(reply?.trace).success, true);
+    });
+
+    it("descarta proposta do turno", () => {
+      const reply = compose({ message: "ok, confirma", executions: [], drafts: [{ outcome: "DRAFTED", proposal }] });
+      assert.equal(reply?.ticketDraft, null);
+      assert.equal(reply?.content, CONFIRMATION_REPLY);
+    });
+
+    it("responde mesmo sem texto do modelo", () => {
+      assert.equal(compose({ message: "pode confirmar", decision: null, fallbackText: "" })?.content, CONFIRMATION_REPLY);
+    });
+
+    it("o template orienta o botão e não passa por falsa ação", () => {
+      assert.match(CONFIRMATION_REPLY, /botão/);
+      assert.equal(claimsFalseAction(CONFIRMATION_REPLY), false);
+    });
+
+    it("frase com conteúdo segue o fluxo normal", () => {
+      const reply = compose({ message: "confirmo que o problema continua no INC-20311", decision: { ...decision, content: "O INC-20311 segue aberto." }, executions: [single] });
+      assert.equal(reply?.ticketLookup, single);
+      assert.equal(reply?.content, "O INC-20311 segue aberto.");
+    });
   });
 
   describe("complemento", () => {

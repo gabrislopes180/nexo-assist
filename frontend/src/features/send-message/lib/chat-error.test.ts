@@ -43,6 +43,13 @@ describe("getChatFailure", () => {
     });
   });
 
+  it("no limite, bloqueia o chat mas deixa confirmar rascunho", () => {
+    expect(getChatFailure(http("CONVERSATION_MESSAGE_LIMIT_REACHED", 409)).lock).toEqual({
+      message: "Você chegou ao limite de 30 mensagens nesta conversa.",
+      allowsDrafts: true,
+    });
+  });
+
   it.each([
     [
       "CONVERSATION_MESSAGE_LIMIT_REACHED",
@@ -54,7 +61,7 @@ describe("getChatFailure", () => {
     expect(getChatFailure(http(code, 409))).toEqual({
       line: NOT_SENT,
       retryable: false,
-      lock: { message },
+      lock: expect.objectContaining({ message }),
       clearConversation: false,
       sessionExpired: false,
     });

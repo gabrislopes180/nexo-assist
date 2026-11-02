@@ -6,7 +6,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.js";
 import { STRUCTURED_OUTPUT_INSTRUCTIONS } from "./instructions.js";
 import { createNexoAgent, type NexoAgentDeps } from "./nexo-agent.js";
 import { createTurnRecorder, type TurnContextValues } from "./tools/turn-recorder.js";
-import { composeReply, llmDecisionSchema, parseDecision } from "./trace.js";
+import { composeReply, llmDecisionSchema, parseDecision, ticketCodesIn } from "./trace.js";
 
 const MAX_STEPS = 4;
 const MODEL_SETTINGS = { maxOutputTokens: 1024, maxRetries: 1, temperature: 0 };
@@ -54,6 +54,8 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
       const requestContext = new RequestContext<TurnContextValues>();
       requestContext.set("actorId", input.actor.id);
       requestContext.set("actorName", input.actor.name);
+      requestContext.set("message", input.message);
+      requestContext.set("shownCodes", input.history.flatMap(({ authorType, content }) => (authorType === "AGENT" ? ticketCodesIn(content) : [])));
       requestContext.set("recorder", recorder);
 
       const startedAt = Date.now();
@@ -68,13 +70,14 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
         if (output.finishReason === "aborted" || output.finishReason === "error") throw new AgentUnavailableError();
 
         const reply = composeReply({
+          message: input.message,
           decision: parseDecision(output.object, output.text),
           fallbackText: output.text,
           executions: recorder.all(),
           drafts: recorder.drafts(),
         });
         if (!reply) throw new AgentUnavailableError();
-        return reply;
+        return { ...reply, quickReplies: reply.quickReplies ?? null };
       } catch (error) {
         console.error("Falha no turno do agent:", describeErrorForLog(error));
         throw new AgentUnavailableError();

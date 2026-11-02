@@ -7,7 +7,7 @@
 import { AgentUnavailableError } from "../chat/agent-runner.js";
 import type { HistoryMessage } from "../conversations/conversation-service.js";
 import type { TicketLookupCriteria, TicketLookupResult } from "../shared/chat.js";
-import { TicketServiceUnavailableError, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
+import { TicketServiceUnavailableError, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
 import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
 import { loadAgentConfig } from "./config.js";
 
@@ -44,7 +44,8 @@ const CASES: readonly Case[] = [
 let lookupResult: TicketLookupResult = NO_MATCH;
 let codeReaderDown = false;
 const lookups: { ownerId: string; criteria: TicketLookupCriteria }[] = [];
-const ticketService: TicketService & TicketCodeReader = {
+const ticketService: TicketService & TicketCodeReader & SimilarTicketReader = {
+  findSimilarTickets: () => Promise.resolve([]),
   lookupOpenTickets(ownerId, criteria) {
     lookups.push({ ownerId, criteria });
     return Promise.resolve(lookupResult);
@@ -116,7 +117,7 @@ async function complementCases(cases: readonly ComplementCase[]): Promise<void> 
       const reply = await runner.runTurn({ conversationId: "eval", actor: { id: OWNER, name: "Marina Costa" }, history, message });
       const verdict = expectDraft === (reply.ticketDraft != null) && (expectText?.test(reply.content) ?? true);
       if (!verdict) process.exitCode = 1;
-      console.log(verdict ? "ok  " : "FALHA", message, JSON.stringify({ content: reply.content, draft: reply.ticketDraft?.content ?? null, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
+      console.log(verdict ? "ok  " : "FALHA", message, JSON.stringify({ content: reply.content, draft: reply.ticketDraft?.kind === "COMPLEMENT" ? reply.ticketDraft.content : null, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
     } catch (error) {
       if (!(error instanceof AgentUnavailableError)) throw error;
       process.exitCode = 1;

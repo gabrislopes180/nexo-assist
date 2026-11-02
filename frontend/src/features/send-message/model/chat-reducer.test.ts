@@ -38,6 +38,8 @@ const result = (
     },
   },
   ticketLookup: null,
+  ticketDraft: null,
+  quickReplies: null,
 });
 
 const sent = (state: ChatState, id = "u1", text = "Oi"): ChatState =>
@@ -61,6 +63,7 @@ describe("chatReducer", () => {
       count: 0,
       limit: 30,
       pendingItemId: null,
+      draftOp: null,
       lock: null,
     });
   });
@@ -85,6 +88,10 @@ describe("chatReducer", () => {
       steps: [{ label: "consultou seus chamados", failed: false }],
       lookup: null,
       selectedCode: null,
+      draft: null,
+      quickReplies: null,
+      selectedReply: null,
+      ticket: null,
     });
     expect(state).toMatchObject({
       conversationId: "c1",
@@ -104,6 +111,7 @@ describe("chatReducer", () => {
 
     expect(state.lock).toEqual({
       message: "Você chegou ao limite de 30 mensagens nesta conversa.",
+      allowsDrafts: true,
     });
   });
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { MAX_LOOKUP_TICKETS, matchTickets, type MatchableTicket } from "./ticket-matching.js";
+import { MAX_LOOKUP_TICKETS, matchTickets, similarTicketMatches, type MatchableTicket } from "./ticket-matching.js";
 
 const NOW = new Date("2026-11-01T12:00:00.000Z");
 const hoursFromNow = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
@@ -181,5 +181,63 @@ describe("matchTickets", () => {
     assert.equal(MAX_LOOKUP_TICKETS, 5);
     assert.equal(result.totalMatches, 7);
     assert.deepEqual(codesOf(result), ["INC-7", "INC-6", "INC-5", "INC-4", "INC-3"]);
+  });
+});
+
+describe("similarTicketMatches", () => {
+  // Títulos e descrições do seed, onde o falso duplicado apareceu.
+  const notebook = ticket({
+    code: "INC-20311",
+    category: "HARDWARE",
+    title: "Notebook lento após atualização do Windows",
+    description: "Depois da última atualização do Windows o notebook ficou muito lento para abrir programas e arquivos.",
+  });
+  const outlook = ticket({
+    code: "INC-20402",
+    category: "EMAIL",
+    title: "Outlook não sincroniza a caixa compartilhada do Comercial",
+    description: "A caixa compartilhada do Comercial parou de sincronizar no Outlook hoje cedo; a equipe não recebe os e-mails dela.",
+  });
+  const monitor = ticket({
+    code: "REQ-10442",
+    category: "HARDWARE",
+    title: "Segundo monitor para home office",
+    description: "Solicito um segundo monitor para trabalhar em casa; uso planilhas e CRM ao mesmo tempo.",
+  });
+  const seed = [notebook, outlook, monitor];
+  const codes = (keywords: string[]) => similarTicketMatches(seed, keywords).map((t) => t.code);
+
+  it("mouse sem fio que parou de funcionar não é parecido com o Outlook", () => {
+    assert.deepEqual(codes(["mouse", "sem fio", "parou", "funcionar"]), []);
+    assert.deepEqual(codes(["mouse sem fio", "parou de funcionar"]), []);
+  });
+
+  it("notebook lento continua achando o INC-20311", () => {
+    assert.deepEqual(codes(["notebook", "lento"]), ["INC-20311"]);
+    assert.deepEqual(codes(["notebook", "lento", "travando", "problema"]), ["INC-20311"]);
+  });
+
+  it("aceita uma batida quando há uma única keyword significativa", () => {
+    assert.deepEqual(codes(["outlook"]), ["INC-20402"]);
+    assert.deepEqual(codes(["outlook", "parou", "erro"]), ["INC-20402"]);
+  });
+
+  it("com duas ou mais significativas, uma batida só não basta", () => {
+    assert.deepEqual(codes(["monitor", "teclado"]), []);
+    assert.deepEqual(codes(["windows", "impressora"]), []);
+  });
+
+  it("só palavras genéricas nunca acham duplicado", () => {
+    assert.deepEqual(codes(["parou", "funcionar", "problema", "erro"]), []);
+    assert.deepEqual(codes(["não funciona"]), []);
+  });
+
+  it("descarta termos curtos e acentos ao classificar", () => {
+    assert.deepEqual(codes(["de", "notebook"]), ["INC-20311"]);
+    assert.deepEqual(codes(["Não Funciona", "NOTEBOOK"]), ["INC-20311"]);
+  });
+
+  it("entre os que passam no mínimo, mantém só os de maior pontuação", () => {
+    assert.deepEqual(codes(["windows", "notebook", "lento", "monitor"]), ["INC-20311"]);
   });
 });

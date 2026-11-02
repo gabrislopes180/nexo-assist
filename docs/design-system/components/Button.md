@@ -5,4 +5,5 @@ Botão de ação, com rótulo começando por verbo. Use **primary** (`cta`) uma 
 - `size="md"` (44px, `shadow-cta`) só no formulário de login. Todo o resto usa `size="sm"` (36px).
 - **secondary** é a alternativa ao lado do principal (Editar, Devolver ao agent, Redefinir senha); **ghost** é a saída discreta (Cancelar); **danger** é só para Encerrar atendimento.
 - O consumidor fornece o rótulo (`children`), `onClick` e, se quiser, `icon` / `iconRight` (nomes Lucide) e `kbd` com o atalho ("⌘↵").
+- `kbd` só aparece em primary, em `micro` `on-ink-muted` sobre `on-ink-rule`. Mostre o atalho só se ele funcionar, e some com ele enquanto a ação roda.
 - Não use dois primary lado a lado nem ícone sem rótulo neste componente.

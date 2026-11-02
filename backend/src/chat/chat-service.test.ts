@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ConversationService, TurnReservation } from "../conversations/conversation-service.js";
 import type { ProposedTicketDraft } from "../shared/chat.js";
-import { TicketServiceUnavailableError, type TicketCodeReader } from "../tickets/ticket-service.js";
+import { TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { SessionUser } from "../shared/session.js";
-import type { AgentTrace } from "../shared/transparency.js";
+import { agentTraceSchema, type AgentTrace } from "../shared/transparency.js";
 import { AgentUnavailableError, createProvisionalAgentRunner, type AgentRunner } from "./agent-runner.js";
 import { createChatService as createService, EmployeeOnlyError } from "./chat-service.js";
 
@@ -47,7 +47,9 @@ function fakeConversations(overrides: Partial<ConversationService> = {}) {
 
 const okRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null }) };
 const failingRunner: AgentRunner = { runTurn: () => Promise.reject(new AgentUnavailableError()) };
-const unusedTickets: TicketCodeReader = { findOpenTicketByCode: () => Promise.reject(new Error("não usado aqui")) };
+type Tickets = TicketCodeReader & TicketAvailability;
+const ensureAvailable = () => Promise.resolve();
+const unusedTickets: Tickets = { findOpenTicketByCode: () => Promise.reject(new Error("não usado aqui")), ensureAvailable };
 
 type ServiceDeps = Parameters<typeof createService>[0];
 const createChatService = (deps: Omit<ServiceDeps, "tickets"> & Partial<Pick<ServiceDeps, "tickets">>) =>
@@ -101,6 +103,7 @@ describe("ChatService", () => {
       message: { id: "m2", authorType: "AGENT", content: "olá", trace, createdAt: NOW.toISOString() },
       ticketLookup: null,
       ticketDraft: null,
+      quickReplies: null,
     });
   });
 
@@ -142,10 +145,57 @@ describe("ChatService", () => {
       },
     });
     const agentRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, ticketDraft }) };
-    const tickets: TicketCodeReader = { findOpenTicketByCode: () => Promise.resolve(ticket) };
+    const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), ensureAvailable };
     const response = await createChatService({ conversations, agentRunner, tickets }).sendMessage(employee, { message: "oi" });
     assert.deepEqual(received, [ticketDraft]);
     assert.deepEqual(response.ticketDraft, { id: "d1", ...ticketDraft });
+  });
+
+  it("devolve as respostas rápidas do turno", async () => {
+    const { conversations } = fakeConversations();
+    const agentRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, quickReplies: ["Sim", "Não"] }) };
+    const response = await createChatService({ conversations, agentRunner }).sendMessage(employee, { message: "oi" });
+    assert.deepEqual(response.quickReplies, ["Sim", "Não"]);
+  });
+
+  it("ao descartar a proposta troca o texto, ajusta o trace e não deixa respostas rápidas", async () => {
+    const ticket = {
+      code: "INC-1",
+      type: "INC",
+      category: "EMAIL",
+      priority: "LOW",
+      status: "IN_PROGRESS",
+      statusLabel: "Em andamento",
+      title: "t",
+      createdAt: NOW.toISOString(),
+      dueAt: null,
+      overdue: false,
+    } as const;
+    const replies: Array<{ content: string; trace: AgentTrace; ticketDraft?: unknown }> = [];
+    const { conversations } = fakeConversations({
+      completeTurn: (_reservation, reply) => {
+        replies.push(reply);
+        return Promise.resolve({ id: "m2", content: reply.content, trace: reply.trace, createdAt: NOW, draftId: null });
+      },
+    });
+    const agentRunner: AgentRunner = {
+      runTurn: () =>
+        Promise.resolve({
+          content: "Confira e confirme",
+          trace,
+          ticketLookup: null,
+          quickReplies: ["Confirmar"],
+          ticketDraft: { kind: "COMPLEMENT", ticket, content: "mais" },
+        }),
+    };
+    const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(null), ensureAvailable };
+    const response = await createChatService({ conversations, agentRunner, tickets }).sendMessage(employee, { message: "oi" });
+    assert.notEqual(response.message.content, "Confira e confirme");
+    assert.equal(response.ticketDraft, null);
+    assert.equal(response.quickReplies, null);
+    assert.equal(replies[0]?.ticketDraft, null);
+    assert.equal(agentTraceSchema.safeParse(replies[0]?.trace).success, true);
+    assert.equal(replies[0]?.trace.actions.at(-1)?.status, "SKIPPED");
   });
 
   it("devolve ticketDraft null quando o turno não propõe rascunho", async () => {
@@ -170,7 +220,7 @@ describe("ChatService", () => {
       const { conversations } = fakeConversations();
       const service = createChatService({ conversations, agentRunner: okRunner });
       const analyst = { ...employee, role: "ANALYST" } as const;
-      await assert.rejects(service.confirmDraft(analyst, "d1", { content: "x" }), EmployeeOnlyError);
+      await assert.rejects(service.confirmDraft(analyst, "d1", { kind: "COMPLEMENT", content: "x" }), EmployeeOnlyError);
       await assert.rejects(service.cancelDraft(analyst, "d1"), EmployeeOnlyError);
     });
 
@@ -183,9 +233,9 @@ describe("ChatService", () => {
           return Promise.reject(new Error("não deveria chamar"));
         },
       });
-      const tickets: TicketCodeReader = { findOpenTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()) };
+      const tickets: Tickets = { findOpenTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()), ensureAvailable };
       const service = createChatService({ conversations, agentRunner: okRunner, tickets });
-      await assert.rejects(service.confirmDraft(employee, "d1", { content: "x" }), TicketServiceUnavailableError);
+      await assert.rejects(service.confirmDraft(employee, "d1", { kind: "COMPLEMENT", content: "x" }), TicketServiceUnavailableError);
       assert.deepEqual(calls, []);
     });
 
@@ -197,10 +247,10 @@ describe("ChatService", () => {
         confirmDraft: () => Promise.resolve({ message: stored, ticket }),
         cancelDraft: () => Promise.resolve({ message: stored }),
       });
-      const tickets: TicketCodeReader = { findOpenTicketByCode: () => Promise.resolve(ticket) };
+      const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), ensureAvailable };
       const service = createChatService({ conversations, agentRunner: runner, tickets });
       const view = { id: "m3", authorType: "AGENT", content: "ok", trace, createdAt: NOW.toISOString() };
-      assert.deepEqual(await service.confirmDraft(employee, "d1", { content: "x" }), { message: view, ticket });
+      assert.deepEqual(await service.confirmDraft(employee, "d1", { kind: "COMPLEMENT", content: "x" }), { message: view, ticket });
       assert.deepEqual(await service.cancelDraft(employee, "d1"), { message: view });
     });
   });

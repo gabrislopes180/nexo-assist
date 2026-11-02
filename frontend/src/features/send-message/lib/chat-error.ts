@@ -42,9 +42,12 @@ export function getChatFailure(error: unknown): ChatFailure {
         retryable: true,
       });
     case "CONVERSATION_MESSAGE_LIMIT_REACHED":
-      return lockedFailure(
-        `Você chegou ao limite de ${DEFAULT_MESSAGE_LIMIT} mensagens nesta conversa.`,
-      );
+      return failure(NOT_SENT, {
+        lock: {
+          message: `Você chegou ao limite de ${DEFAULT_MESSAGE_LIMIT} mensagens nesta conversa.`,
+          allowsDrafts: true,
+        },
+      });
     case "CONVERSATION_CLOSED":
       return lockedFailure("Esta conversa foi encerrada.");
     case "CONVERSATION_NOT_WITH_AGENT":

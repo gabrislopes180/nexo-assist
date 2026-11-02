@@ -17,6 +17,8 @@ export type AgentTurnResult = {
   ticketLookup: TicketLookupResult | null;
   /** Proposta da tool, que não grava nada. O ChatService revalida o chamado, e o `completeTurn` persiste. */
   ticketDraft?: ProposedTicketDraft | null;
+  /** Atalhos de resposta mostrados com a mensagem. */
+  quickReplies?: string[] | null;
 };
 
 export type AgentRunner = {

@@ -1,8 +1,9 @@
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { TicketStatus } from "../generated/prisma/enums.js";
-import type { TicketLookupCriteria, TicketLookupResult, TicketSummary } from "../shared/chat.js";
-import { matchTickets, toTicketSummary, type MatchableTicket } from "./ticket-matching.js";
-import { isOpen, OPEN_STATUSES, type OpenTicketStatus } from "./ticket-rules.js";
+import type { SimilarTicket, TicketLookupCriteria, TicketLookupResult, TicketSummary } from "../shared/chat.js";
+import { isOverdue } from "./sla.js";
+import { byUrgency, MAX_LOOKUP_TICKETS, matchTickets, similarTicketMatches, toTicketSummary, type MatchableTicket } from "./ticket-matching.js";
+import { canReopen, isOpen, OPEN_STATUSES, TICKET_STATUS_LABEL, type OpenTicketStatus } from "./ticket-rules.js";
 
 /** A futura tool converte este erro no resultado `UNAVAILABLE`. */
 export class TicketServiceUnavailableError extends Error {
@@ -25,6 +26,18 @@ export type TicketCodeReader = {
   findOpenTicketByCode(ownerId: string, code: string, now: Date): Promise<TicketSummary | null>;
 };
 
+/** Possíveis duplicados do dono: abertos e resolvidos ainda reabríveis, com escopo de dono. */
+export type SimilarTicketReader = {
+  findSimilarTickets(ownerId: string, keywords: readonly string[], now: Date): Promise<SimilarTicket[]>;
+};
+
+/** Falha com TicketServiceUnavailableError quando o serviço não pode receber uma escrita. */
+export type TicketAvailability = {
+  ensureAvailable(): Promise<void>;
+};
+
+export type FullTicketService = TicketService & TicketCodeReader & SimilarTicketReader & TicketAvailability;
+
 export const matchableTicketSelect = {
   code: true,
   type: true,
@@ -41,8 +54,34 @@ export function isOpenTicket<T extends { status: TicketStatus }>(ticket: T): tic
   return isOpen(ticket);
 }
 
-export function createTicketService(client: Pick<PrismaClient, "ticket">): TicketService & TicketCodeReader {
+export function createTicketService(client: Pick<PrismaClient, "ticket">): FullTicketService {
   return {
+    async ensureAvailable() {
+      await client.ticket.findFirst({ select: { id: true } });
+    },
+
+    async findSimilarTickets(ownerId, keywords, now) {
+      const rows = await client.ticket.findMany({ where: { ownerId }, select: { ...matchableTicketSelect, resolvedAt: true } });
+      const candidates = rows.filter((ticket) => isOpen(ticket) || canReopen(ticket, now));
+      return [...similarTicketMatches(candidates, keywords)]
+        .sort(byUrgency(now))
+        .slice(0, MAX_LOOKUP_TICKETS)
+        .map((ticket) => ({
+          code: ticket.code,
+          type: ticket.type,
+          category: ticket.category,
+          priority: ticket.priority,
+          status: ticket.status,
+          statusLabel: TICKET_STATUS_LABEL[ticket.status],
+          title: ticket.title,
+          createdAt: ticket.createdAt.toISOString(),
+          dueAt: ticket.dueAt?.toISOString() ?? null,
+          overdue: isOverdue(ticket, now),
+          canReopen: canReopen(ticket, now),
+        }));
+    },
+
+
     async findOpenTicketByCode(ownerId, code, now) {
       const ticket = await client.ticket.findFirst({
         where: { ownerId, code: code.toUpperCase(), status: { in: [...OPEN_STATUSES] } },

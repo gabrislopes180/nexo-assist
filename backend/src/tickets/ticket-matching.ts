@@ -36,17 +36,46 @@ function normalizedKeywords(keywords: readonly string[]): string[] {
   return [...new Set(keywords.map(normalizeSearchText))].filter((keyword) => keyword !== "");
 }
 
-function keywordScore(ticket: MatchableTicket, keywords: readonly string[]): number {
+type SearchableTicket = Pick<MatchableTicket, "title" | "description" | "category">;
+type RankableTicket = Pick<MatchableTicket, "code" | "createdAt" | "dueAt">;
+
+function keywordScore(ticket: SearchableTicket, keywords: readonly string[]): number {
   const text = normalizeSearchText(`${ticket.title} ${ticket.description} ${TICKET_CATEGORY_LABEL[ticket.category]}`);
   return keywords.filter((keyword) => text.includes(keyword)).length;
 }
 
-function bestKeywordMatches(tickets: readonly MatchableTicket[], rawKeywords: readonly string[]): readonly MatchableTicket[] {
-  const keywords = normalizedKeywords(rawKeywords);
+/** Só os de maior pontuação, desde que ela chegue a `minScore`. */
+function topScored<T extends SearchableTicket>(tickets: readonly T[], keywords: readonly string[], minScore: number): readonly T[] {
   if (keywords.length === 0) return [];
   const scored = tickets.map((ticket) => ({ ticket, score: keywordScore(ticket, keywords) }));
   const best = Math.max(0, ...scored.map(({ score }) => score));
-  return best === 0 ? [] : scored.filter(({ score }) => score === best).map(({ ticket }) => ticket);
+  return best < Math.max(1, minScore) ? [] : scored.filter(({ score }) => score === best).map(({ ticket }) => ticket);
+}
+
+export function bestKeywordMatches<T extends SearchableTicket>(tickets: readonly T[], rawKeywords: readonly string[]): readonly T[] {
+  return topScored(tickets, normalizedKeywords(rawKeywords), 1);
+}
+
+/** Termos que aparecem em qualquer relato de problema e não dizem qual é o problema (já normalizados). */
+const GENERIC_TERMS = new Set([
+  "parou", "parar", "parado", "parada", "para", "funciona", "funcionar", "funcionando", "funcionou",
+  "nao", "sem", "com", "que", "meu", "minha", "esta", "ficou", "mais", "muito", "hoje",
+  "problema", "problemas", "erro", "erros", "falha", "falhas", "falhando", "defeito", "quebrou", "quebrado",
+  "ajuda", "preciso", "consigo", "conseguir", "consegue",
+]);
+
+/** Keyword com ao menos um termo de 3 letras ou mais que não seja genérico. */
+function isSignificant(keyword: string): boolean {
+  return keyword.split(" ").some((term) => term.length >= 3 && !GENERIC_TERMS.has(term));
+}
+
+/**
+ * Para apontar possível duplicado, uma palavra em comum não basta: exige duas keywords
+ * significativas batendo, ou a única que houver. Palavras genéricas não contam.
+ */
+export function similarTicketMatches<T extends SearchableTicket>(tickets: readonly T[], rawKeywords: readonly string[]): readonly T[] {
+  const keywords = normalizedKeywords(rawKeywords).filter(isSignificant);
+  return topScored(tickets, keywords, Math.min(2, keywords.length));
 }
 
 function selectMatches(tickets: readonly MatchableTicket[], criteria: TicketLookupCriteria): readonly MatchableTicket[] {
@@ -59,8 +88,8 @@ function selectMatches(tickets: readonly MatchableTicket[], criteria: TicketLook
 }
 
 /** Vencidos primeiro, `dueAt` crescente (nulos por último), `createdAt` decrescente, `code`. */
-function byUrgency(now: Date) {
-  return (a: MatchableTicket, b: MatchableTicket): number => {
+export function byUrgency(now: Date) {
+  return (a: RankableTicket, b: RankableTicket): number => {
     const overdue = Number(isOverdue(b, now)) - Number(isOverdue(a, now));
     if (overdue !== 0) return overdue;
     const dueA = a.dueAt?.getTime() ?? Number.POSITIVE_INFINITY;

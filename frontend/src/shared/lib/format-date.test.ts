@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { formatShortDate, formatShortDateTime } from "./format-date";
+import {
+  formatDueTime,
+  formatShortDate,
+  formatShortDateTime,
+} from "./format-date";
+
+describe("formatDueTime", () => {
+  const now = new Date("2026-10-20T10:00:00");
+
+  it("mostra só a hora quando o prazo é hoje", () => {
+    expect(formatDueTime("2026-10-20T13:43:00", now)).toBe("13:43");
+  });
+
+  it("mostra data e hora em outro dia", () => {
+    expect(formatDueTime("2026-10-21T08:05:00", now)).toBe("21 out, 08:05");
+  });
+});
 
 // Sem "Z": o Date interpreta em hora local, e o teste não depende do fuso.
 describe("formatShortDate", () => {

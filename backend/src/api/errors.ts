@@ -9,7 +9,7 @@ import {
   ConversationNotWithAgentError,
 } from "../conversations/conversation-service.js";
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
-import { DraftNotFoundError, TicketNotOpenError } from "../conversations/ticket-draft.js";
+import { DraftKindMismatchError, DraftNotFoundError, TicketNotOpenError } from "../conversations/ticket-draft.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import { TicketServiceUnavailableError } from "../tickets/ticket-service.js";
 
@@ -46,6 +46,7 @@ const DOMAIN_ERRORS = [
     code: "CONVERSATION_NOT_WITH_AGENT",
     message: "Esta conversa não está mais com o assistente.",
   },
+  { type: DraftKindMismatchError, status: 400, code: "INVALID_REQUEST", message: "Requisição inválida." },
   { type: DraftNotFoundError, status: 404, code: "DRAFT_NOT_FOUND", message: "Rascunho não encontrado." },
   { type: TicketNotOpenError, status: 409, code: "TICKET_NOT_OPEN", message: "Este chamado não está mais aberto." },
   {

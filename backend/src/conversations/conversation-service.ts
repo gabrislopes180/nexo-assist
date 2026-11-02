@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
-import type { ProposedTicketDraft, TicketSummary } from "../shared/chat.js";
-import type { ComplementDraft } from "../shared/conversation-draft.js";
+import type { ConfirmDraftRequest, ProposedTicketDraft } from "../shared/chat.js";
+import type { ConfirmableDraft } from "../shared/conversation-draft.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { CONVERSATION_MESSAGE_LIMIT, ConversationNotWithAgentError } from "./conversation-rules.js";
-import { cancelComplement, confirmComplement, readComplementDraft, type StoredAgentMessage } from "./ticket-draft.js";
+import { cancelPendingDraft, confirmPendingDraft, readPendingDraft, type ConfirmedDraft, type StoredAgentMessage } from "./ticket-draft.js";
 
 export class ConversationNotFoundError extends Error {
   constructor() {
@@ -58,8 +58,8 @@ export type ConversationService = {
   /** Grava resposta e rascunho na mesma transação: turno que falha não deixa rascunho. */
   completeTurn(reservation: TurnReservation, reply: AgentReply): Promise<StoredAgentMessage & { draftId: string | null }>;
   abortTurn(reservation: TurnReservation): Promise<void>;
-  readDraft(ownerId: string, draftId: string): Promise<ComplementDraft>;
-  confirmDraft(ownerId: string, draftId: string, content: string, now: Date): Promise<{ message: StoredAgentMessage; ticket: TicketSummary }>;
+  readDraft(ownerId: string, draftId: string): Promise<ConfirmableDraft>;
+  confirmDraft(ownerId: string, draftId: string, request: ConfirmDraftRequest, now: Date): Promise<ConfirmedDraft>;
   cancelDraft(ownerId: string, draftId: string, now: Date): Promise<{ message: StoredAgentMessage }>;
 };
 
@@ -156,6 +156,12 @@ async function continueConversationTurn(
   };
 }
 
+function toPendingDraft(proposal: ProposedTicketDraft, now: Date): ConfirmableDraft {
+  const base = { draftId: randomUUID(), createdAt: now.toISOString() };
+  if (proposal.kind === "CREATE") return { ...base, ...proposal };
+  return { ...base, kind: proposal.kind, ticketCode: proposal.ticket.code, content: proposal.content };
+}
+
 /** Transações curtas: nenhuma fica aberta durante a chamada da LLM, ou o SQLite bloquearia as escritas. */
 export function createConversationService(client: PrismaClient): ConversationService {
   return {
@@ -168,15 +174,7 @@ export function createConversationService(client: PrismaClient): ConversationSer
     },
 
     completeTurn({ conversationId }, { content, trace, ticketDraft, now }) {
-      const draft: ComplementDraft | null = ticketDraft
-        ? {
-            draftId: randomUUID(),
-            createdAt: now.toISOString(),
-            kind: ticketDraft.kind,
-            ticketCode: ticketDraft.ticket.code,
-            content: ticketDraft.content,
-          }
-        : null;
+      const draft = ticketDraft ? toPendingDraft(ticketDraft, now) : null;
       return client.$transaction(async (tx) => {
         const message = await tx.message.create({
           data: { conversationId, authorType: "AGENT", authorId: null, content, trace, createdAt: now },
@@ -191,15 +189,15 @@ export function createConversationService(client: PrismaClient): ConversationSer
     },
 
     readDraft(ownerId, draftId) {
-      return readComplementDraft(client, ownerId, draftId);
+      return readPendingDraft(client, ownerId, draftId);
     },
 
-    confirmDraft(ownerId, draftId, content, now) {
-      return client.$transaction((tx) => confirmComplement(tx, { ownerId, draftId, content, now }));
+    confirmDraft(ownerId, draftId, request, now) {
+      return client.$transaction((tx) => confirmPendingDraft(tx, { ownerId, draftId, request, now }));
     },
 
     cancelDraft(ownerId, draftId, now) {
-      return client.$transaction((tx) => cancelComplement(tx, { ownerId, draftId, now }));
+      return client.$transaction((tx) => cancelPendingDraft(tx, { ownerId, draftId, now }));
     },
 
     async abortTurn(reservation) {

@@ -7,7 +7,7 @@ import type { ProposedTicketDraft } from "../shared/chat.js";
 import { complementDraftSchema } from "../shared/conversation-draft.js";
 import { agentTraceSchema, type AgentTrace } from "../shared/transparency.js";
 import { ConversationNotWithAgentError, createConversationService, type ConversationService } from "./conversation-service.js";
-import { DraftNotFoundError, TicketNotOpenError } from "./ticket-draft.js";
+import { DraftKindMismatchError, DraftNotFoundError, TicketNotOpenError } from "./ticket-draft.js";
 
 const T0 = new Date("2026-11-01T12:00:00.000Z");
 const T1 = new Date("2026-11-01T13:00:00.000Z");
@@ -70,7 +70,7 @@ describe("rascunho de complemento", () => {
   }
 
   const setStatus = (id: string, status: ConversationStatus) => client.conversation.update({ where: { id }, data: { status } });
-  const confirm = (draftId: string, owner = ownerId, content = "Texto final") => service.confirmDraft(owner, draftId, content, T1);
+  const confirm = (draftId: string, owner = ownerId, content = "Texto final") => service.confirmDraft(owner, draftId, { kind: "COMPLEMENT", content }, T1);
   const eventsOf = () => client.ticketEvent.findMany({ where: { ticketId } });
   const draftIdOf = async (id: string) => (await client.conversation.findUniqueOrThrow({ where: { id } })).pendingDraftId;
 
@@ -133,7 +133,8 @@ describe("rascunho de complemento", () => {
   describe("readDraft", () => {
     it("devolve o rascunho só para o dono", async () => {
       const { draftId } = await conversationWithDraft();
-      assert.equal((await service.readDraft(ownerId, draftId)).ticketCode, CODE);
+      const draft = await service.readDraft(ownerId, draftId);
+      assert.equal(draft.kind === "COMPLEMENT" && draft.ticketCode, CODE);
       await assert.rejects(service.readDraft(otherOwnerId, draftId), DraftNotFoundError);
       await assert.rejects(service.readDraft(ownerId, "nao-existe"), DraftNotFoundError);
     });
@@ -254,6 +255,42 @@ describe("rascunho de complemento", () => {
         assert.equal((await eventsOf()).length, 0);
       });
     }
+
+    it("falha depois do evento desfaz evento, updatedAt e limpeza do rascunho", async () => {
+      await createTicket();
+      const { conversationId, draftId } = await conversationWithDraft();
+      const messagesBefore = await client.message.count({ where: { conversationId } });
+      await client.$executeRawUnsafe(
+        `CREATE TRIGGER "test_fail_agent_message" BEFORE INSERT ON "Message" BEGIN SELECT RAISE(ABORT, 'falha simulada'); END`,
+      );
+      try {
+        await assert.rejects(confirm(draftId));
+      } finally {
+        await client.$executeRawUnsafe(`DROP TRIGGER "test_fail_agent_message"`);
+      }
+      assert.equal((await eventsOf()).length, 0);
+      assert.deepEqual((await client.ticket.findUniqueOrThrow({ where: { id: ticketId } })).updatedAt, T0);
+      assert.equal(await draftIdOf(conversationId), draftId);
+      assert.equal(await client.message.count({ where: { conversationId } }), messagesBefore);
+    });
+
+    it("não deixa updatedAt regredir quando a confirmação traz hora anterior à do chamado", async () => {
+      await createTicket();
+      const { draftId } = await conversationWithDraft();
+      await client.ticket.update({ where: { id: ticketId }, data: { updatedAt: T2 } });
+      await confirm(draftId);
+      const [event] = await eventsOf();
+      assert.deepEqual(event?.createdAt, T2);
+      assert.deepEqual((await client.ticket.findUniqueOrThrow({ where: { id: ticketId } })).updatedAt, T2);
+    });
+
+    it("recusa body CREATE em rascunho de complemento, sem efeitos", async () => {
+      await createTicket();
+      const { conversationId, draftId } = await conversationWithDraft();
+      const body = { kind: "CREATE", title: "t", description: "d", affectedScope: "TEAM" } as const;
+      await assert.rejects(service.confirmDraft(ownerId, draftId, body, T1), DraftKindMismatchError);
+      assert.equal(await draftIdOf(conversationId), draftId);
+    });
 
     it("o evento continua append-only depois de gravado", async () => {
       await createTicket();

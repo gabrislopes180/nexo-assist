@@ -1,8 +1,9 @@
 import { CONVERSATION_MESSAGE_LIMIT, remainingMessages } from "../conversations/conversation-rules.js";
 import type { ConversationService, StoredAgentMessage, TurnReservation } from "../conversations/conversation-service.js";
-import { TicketNotOpenError } from "../conversations/ticket-draft.js";
+import { DraftKindMismatchError, TicketNotOpenError } from "../conversations/ticket-draft.js";
 import {
-  proposedTicketDraftSchema,
+  proposedAnyDraftSchema,
+  quickRepliesSchema,
   type CancelDraftResponse,
   type ChatMessageView,
   type ChatRequest,
@@ -10,11 +11,14 @@ import {
   type ConfirmDraftRequest,
   type ConfirmDraftResponse,
   type ProposedTicketDraft,
+  type TicketDraft,
 } from "../shared/chat.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import type { SessionUser } from "../shared/session.js";
-import { agentTraceSchema } from "../shared/transparency.js";
-import { TicketServiceUnavailableError, type TicketCodeReader } from "../tickets/ticket-service.js";
+import { agentTraceSchema, type AgentAction, type AgentTrace } from "../shared/transparency.js";
+import { computeDueAt } from "../tickets/sla.js";
+import { capPriority } from "../tickets/ticket-rules.js";
+import { TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import { AgentUnavailableError, type AgentRunner } from "./agent-runner.js";
 
 export class EmployeeOnlyError extends Error {
@@ -33,9 +37,32 @@ export type ChatService = {
 type ChatServiceDeps = {
   conversations: ConversationService;
   agentRunner: AgentRunner;
-  tickets: TicketCodeReader;
+  tickets: TicketCodeReader & TicketAvailability;
   now?: () => Date;
 };
+
+/** A proposta aceita, ou o que a resposta passa a dizer quando ela foi descartada. */
+type ResolvedProposal = { ticketDraft: ProposedTicketDraft } | { discarded: { content: string; action: AgentAction } };
+
+const DRAFT_NOT_VERIFIED = {
+  content: "Não encontrei esse chamado entre os seus chamados abertos, então nada foi preparado.",
+  action: { tool: "validateTicketDraft", summary: "Chamado da proposta não está entre os abertos da pessoa; rascunho descartado.", status: "SKIPPED" },
+} as const;
+
+const DRAFT_UNAVAILABLE = {
+  content: "Não consegui verificar o chamado agora, então nada foi preparado. Tente novamente em instantes.",
+  action: { tool: "validateTicketDraft", summary: "Serviço de chamados indisponível; rascunho descartado.", status: "ERROR" },
+} as const;
+
+function withDiscardedDraft(trace: AgentTrace, action: AgentAction): AgentTrace {
+  return { ...trace, actions: [...trace.actions, action], reason: "O rascunho proposto foi descartado na validação do backend." };
+}
+
+function toDraftView(proposal: ProposedTicketDraft, id: string, at: Date): TicketDraft {
+  if (proposal.kind === "COMPLEMENT") return { id, ...proposal };
+  const { priorityReason: _priorityReason, ...visible } = proposal;
+  return { id, ...visible, dueAtPreview: computeDueAt(proposal.priority, at).toISOString() };
+}
 
 function toMessageView(message: StoredAgentMessage): ChatMessageView {
   return {
@@ -62,15 +89,19 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
   }
 
   /**
-   * A proposta só define o que complementar: o chamado mostrado e gravado vem do serviço, com
-   * escopo de dono. Sem como validar, descarta a proposta em vez de derrubar o turno.
+   * Complemento: a proposta só define o que complementar; o chamado mostrado e gravado vem do
+   * serviço, com escopo de dono. Criação: o teto de prioridade vale de novo aqui. Sem como
+   * validar, descarta a proposta em vez de derrubar o turno.
    */
-  async function verifiedDraft(ownerId: string, proposal: ProposedTicketDraft): Promise<ProposedTicketDraft | null> {
+  async function resolveProposal(ownerId: string, proposal: ProposedTicketDraft): Promise<ResolvedProposal> {
+    if (proposal.kind === "CREATE") {
+      return { ticketDraft: { ...proposal, priority: capPriority(proposal.priority, proposal.affectedScope) } };
+    }
     try {
       const ticket = await tickets.findOpenTicketByCode(ownerId, proposal.ticket.code, now());
-      return ticket && { ...proposal, ticket };
+      return ticket ? { ticketDraft: { ...proposal, ticket } } : { discarded: DRAFT_NOT_VERIFIED };
     } catch (error) {
-      if (error instanceof TicketServiceUnavailableError) return null;
+      if (error instanceof TicketServiceUnavailableError) return { discarded: DRAFT_UNAVAILABLE };
       throw error;
     }
   }
@@ -94,10 +125,19 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
           message,
         });
         const trace = agentTraceSchema.safeParse(result.trace);
-        const proposal = proposedTicketDraftSchema.nullish().safeParse(result.ticketDraft);
+        const proposal = proposedAnyDraftSchema.nullish().safeParse(result.ticketDraft);
         if (!trace.success || !proposal.success) throw new AgentUnavailableError();
-        const ticketDraft = proposal.data ? await verifiedDraft(actor.id, proposal.data) : null;
-        const stored = await conversations.completeTurn(reservation, { content: result.content, trace: trace.data, ticketDraft, now: now() });
+        const resolved = proposal.data ? await resolveProposal(actor.id, proposal.data) : null;
+        const discarded = resolved && "discarded" in resolved ? resolved.discarded : null;
+        const ticketDraft = resolved && "ticketDraft" in resolved ? resolved.ticketDraft : null;
+        const quickReplies = quickRepliesSchema.safeParse(result.quickReplies);
+        const at = now();
+        const stored = await conversations.completeTurn(reservation, {
+          content: discarded ? discarded.content : result.content,
+          trace: discarded ? withDiscardedDraft(trace.data, discarded.action) : trace.data,
+          ticketDraft,
+          now: at,
+        });
         return {
           conversation: {
             id: reservation.conversationId,
@@ -108,7 +148,8 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
           },
           message: toMessageView(stored),
           ticketLookup: result.ticketLookup,
-          ticketDraft: ticketDraft && stored.draftId ? { id: stored.draftId, ...ticketDraft } : null,
+          ticketDraft: ticketDraft && stored.draftId ? toDraftView(ticketDraft, stored.draftId, at) : null,
+          quickReplies: !discarded && quickReplies.success ? quickReplies.data : null,
         };
       } catch (error) {
         await abort(reservation);
@@ -117,11 +158,13 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
     },
 
     /** Sem LLM e sem consumir cota. A checagem pelo serviço trata a indisponibilidade; a da transação decide. */
-    async confirmDraft(actor, draftId, { content }) {
+    async confirmDraft(actor, draftId, request) {
       assertEmployee(actor);
       const draft = await conversations.readDraft(actor.id, draftId);
-      if (!(await tickets.findOpenTicketByCode(actor.id, draft.ticketCode, now()))) throw new TicketNotOpenError();
-      const { message, ticket } = await conversations.confirmDraft(actor.id, draftId, content, now());
+      if (draft.kind !== request.kind) throw new DraftKindMismatchError();
+      if (draft.kind === "CREATE") await tickets.ensureAvailable();
+      else if (!(await tickets.findOpenTicketByCode(actor.id, draft.ticketCode, now()))) throw new TicketNotOpenError();
+      const { message, ticket } = await conversations.confirmDraft(actor.id, draftId, request, now());
       return { message: toMessageView(message), ticket };
     },
 

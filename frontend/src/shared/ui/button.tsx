@@ -36,6 +36,8 @@ const buttonVariants = cva(
 interface ButtonProps
   extends ComponentProps<"button">, VariantProps<typeof buttonVariants> {
   iconRight?: ReactNode;
+  /** Atalho mostrado no botão, como "⌘↵". Só no primary, sobre `cta`. */
+  kbd?: string;
 }
 
 export function Button({
@@ -44,6 +46,7 @@ export function Button({
   size,
   block,
   iconRight,
+  kbd,
   children,
   type = "button",
   ...props
@@ -55,6 +58,14 @@ export function Button({
       {...props}
     >
       {children}
+      {kbd ? (
+        <kbd
+          aria-hidden="true"
+          className="-ml-0.5 rounded-sm bg-on-ink-rule px-1.25 py-px font-ui text-micro font-normal text-on-ink-muted"
+        >
+          {kbd}
+        </kbd>
+      ) : null}
       {iconRight}
     </button>
   );

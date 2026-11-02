@@ -3,14 +3,14 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { TicketStatus } from "../generated/prisma/enums.js";
-import { createTicketService, type TicketCodeReader, type TicketService } from "./ticket-service.js";
+import { createTicketService, type FullTicketService } from "./ticket-service.js";
 
 const NOW = new Date("2026-11-01T12:00:00.000Z");
 const hoursFromNow = (hours: number) => new Date(NOW.getTime() + hours * 3_600_000);
 
 describe("TicketService", () => {
   let client: PrismaClient;
-  let service: TicketService & TicketCodeReader;
+  let service: FullTicketService;
   let ownerId: string;
   let otherOwnerId: string;
 
@@ -95,6 +95,69 @@ describe("TicketService", () => {
     assert.equal(result.tickets[0]?.dueAt, null);
     assert.equal(result.tickets[0]?.overdue, false);
     assert.equal(result.tickets[0]?.statusLabel, "Aguardando funcionário");
+  });
+
+  describe("findSimilarTickets", () => {
+    const resolvedAgo = (days: number) => new Date(NOW.getTime() - days * 86_400_000);
+
+    async function createResolved(owner: string, code: string, resolvedAt: Date) {
+      const ticket = await createTicket(owner, code, "RESOLVED", null);
+      await client.ticket.update({ where: { id: ticket.id }, data: { resolvedAt } });
+    }
+
+    it("devolve abertos e resolvidos reabríveis, sem description", async () => {
+      await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      await createResolved(ownerId, "INC-2", resolvedAgo(1));
+      const similar = await service.findSimilarTickets(ownerId, ["título"], NOW);
+      assert.deepEqual(similar.map((t) => [t.code, t.status, t.canReopen]), [
+        ["INC-1", "IN_PROGRESS", false],
+        ["INC-2", "RESOLVED", true],
+      ]);
+      assert.equal(similar[1]?.statusLabel, "Resolvido");
+      assert.equal("description" in (similar[0] ?? {}), false);
+    });
+
+    it("inclui resolvido a exatos 7 dias e exclui a 8 dias", async () => {
+      await createResolved(ownerId, "INC-1", resolvedAgo(7));
+      await createResolved(ownerId, "INC-2", resolvedAgo(8));
+      assert.deepEqual((await service.findSimilarTickets(ownerId, ["título"], NOW)).map((t) => t.code), ["INC-1"]);
+    });
+
+    it("não devolve chamados de outro dono", async () => {
+      await createTicket(otherOwnerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      await createResolved(otherOwnerId, "INC-2", resolvedAgo(1));
+      assert.deepEqual(await service.findSimilarTickets(ownerId, ["título"], NOW), []);
+    });
+
+    it("reaproveita o match: só os de maior pontuação", async () => {
+      await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      await createTicket(ownerId, "INC-2", "IN_PROGRESS", hoursFromNow(1));
+      const similar = await service.findSimilarTickets(ownerId, ["título", "inc-2"], NOW);
+      assert.deepEqual(similar.map((t) => t.code), ["INC-2"]);
+    });
+
+    it("uma palavra genérica em comum não basta para ser parecido", async () => {
+      await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      await client.ticket.update({ where: { code: "INC-1" }, data: { description: "A caixa parou de sincronizar." } });
+      assert.deepEqual(await service.findSimilarTickets(ownerId, ["mouse", "sem fio", "parou", "funcionar"], NOW), []);
+    });
+
+    it("sem keyword útil não devolve nada", async () => {
+      await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      assert.deepEqual(await service.findSimilarTickets(ownerId, ["   "], NOW), []);
+      assert.deepEqual(await service.findSimilarTickets(ownerId, [], NOW), []);
+    });
+
+    it("corta em 5", async () => {
+      for (let i = 1; i <= 7; i++) await createTicket(ownerId, `INC-${i}`, "IN_PROGRESS", hoursFromNow(i));
+      assert.equal((await service.findSimilarTickets(ownerId, ["título"], NOW)).length, 5);
+    });
+  });
+
+  describe("ensureAvailable", () => {
+    it("resolve com o banco no ar", async () => {
+      await service.ensureAvailable();
+    });
   });
 
   describe("findOpenTicketByCode", () => {

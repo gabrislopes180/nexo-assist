@@ -1,7 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { TicketServiceUnavailableError, type TicketCodeReader, type TicketService } from "./ticket-service.js";
-
-type FullTicketService = TicketService & TicketCodeReader;
+import { TicketServiceUnavailableError, type FullTicketService } from "./ticket-service.js";
 
 export type ResilienceOptions = { timeoutMs: number; attempts: number; retryDelayMs: number };
 
@@ -36,6 +34,8 @@ export function createResilientTicketService(service: FullTicketService, options
   return {
     lookupOpenTickets: (ownerId, criteria, now) => withRetry(() => service.lookupOpenTickets(ownerId, criteria, now), options),
     findOpenTicketByCode: (ownerId, code, now) => withRetry(() => service.findOpenTicketByCode(ownerId, code, now), options),
+    findSimilarTickets: (ownerId, keywords, now) => withRetry(() => service.findSimilarTickets(ownerId, keywords, now), options),
+    ensureAvailable: () => withRetry(() => service.ensureAvailable(), options),
   };
 }
 
@@ -44,6 +44,8 @@ export function createUnavailableTicketService(): FullTicketService {
   return {
     lookupOpenTickets: () => Promise.reject(new TicketServiceUnavailableError()),
     findOpenTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()),
+    findSimilarTickets: () => Promise.reject(new TicketServiceUnavailableError()),
+    ensureAvailable: () => Promise.reject(new TicketServiceUnavailableError()),
   };
 }
 

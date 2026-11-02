@@ -26,3 +26,11 @@ export function formatShortDateTime(iso: string): string {
   const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
   return `${formatShortDate(iso)}, ${time}`;
 }
+
+/** Prazo curto: só a hora quando vence hoje ("13:43"), senão "16 out, 14:20". */
+export function formatDueTime(iso: string, now: Date): string {
+  const date = new Date(iso);
+  const isToday = date.toDateString() === now.toDateString();
+  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
+  return isToday ? time : formatShortDateTime(iso);
+}

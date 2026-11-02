@@ -28,6 +28,41 @@ describe("trailSteps", () => {
     expect(trailSteps([action("deleteEverything", "SUCCESS", "x")])).toEqual([]);
   });
 
+  it("mostra os três passos do rascunho de chamado", () => {
+    expect(trailSteps([action("draftTicket", "SUCCESS")]).map((s) => s.label)).toEqual([
+      "classificou a prioridade",
+      "consultou o SLA",
+      "montou o rascunho",
+    ]);
+  });
+
+  it("mapeia rascunho de complemento e falhas de rascunho", () => {
+    expect(trailSteps([action("draftComplement", "SUCCESS")])).toEqual([
+      { label: "montou o rascunho", failed: false },
+    ]);
+    expect(trailSteps([action("draftTicket", "ERROR")])).toEqual([
+      { label: "não conseguiu montar o rascunho", failed: true },
+    ]);
+    expect(trailSteps([action("draftComplement", "SKIPPED")])).toEqual([]);
+  });
+
+  it("mapeia confirmação, cancelamento e validação", () => {
+    expect(trailSteps([action("createTicket", "SUCCESS")])).toEqual([
+      { label: "criou o chamado", failed: false },
+    ]);
+    expect(trailSteps([action("addTicketComplement", "SUCCESS")])).toEqual([
+      { label: "registrou o complemento", failed: false },
+    ]);
+    expect(trailSteps([action("createTicket", "SKIPPED")])).toEqual([]);
+    expect(trailSteps([action("addTicketComplement", "SKIPPED")])).toEqual([]);
+    expect(trailSteps([action("validateTicketDraft", "SKIPPED")])).toEqual([
+      { label: "não encontrou o chamado", failed: true },
+    ]);
+    expect(trailSteps([action("validateTicketDraft", "ERROR")])).toEqual([
+      { label: "não conseguiu verificar o chamado", failed: true },
+    ]);
+  });
+
   it("deduplica passos iguais do mesmo turno", () => {
     const steps = trailSteps([
       action("searchMyOpenTickets", "SUCCESS", "a"),

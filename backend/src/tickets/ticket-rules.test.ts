@@ -11,6 +11,7 @@ import {
   TICKET_TYPE_LABEL,
   applyTicketEvent,
   canReopen,
+  capPriority,
   canTransition,
   initialTimeline,
   isOpen,
@@ -387,5 +388,19 @@ describe("canReopen", () => {
 
   it("false se não está resolvido", () => {
     assert.equal(canReopen({ status: "IN_PROGRESS", resolvedAt: null }, resolvedAt), false);
+  });
+});
+
+describe("capPriority", () => {
+  it("rebaixa CRITICAL para HIGH só com escopo INDIVIDUAL", () => {
+    assert.equal(capPriority("CRITICAL", "INDIVIDUAL"), "HIGH");
+    assert.equal(capPriority("CRITICAL", "TEAM"), "CRITICAL");
+    assert.equal(capPriority("CRITICAL", "COMPANY"), "CRITICAL");
+  });
+
+  it("não mexe nas outras prioridades", () => {
+    for (const priority of ["HIGH", "MEDIUM", "LOW"] as const) {
+      assert.equal(capPriority(priority, "INDIVIDUAL"), priority);
+    }
   });
 });
