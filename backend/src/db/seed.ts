@@ -1,4 +1,5 @@
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
+import { HANDOFF_SYSTEM_MESSAGE } from "../conversations/handoff.js";
 import type { TicketType } from "../generated/prisma/enums.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
 import { agentTraceSchema } from "../shared/transparency.js";
@@ -291,6 +292,17 @@ async function verify(tx: DbTransaction, now: Date) {
       }
       if (m.authorType === "AGENT" || m.authorType === "SYSTEM") check(m.authorId === null, `mensagem ${m.id}: autor deveria ser null`);
     }
+  }
+
+  for (const c of conversations.filter((conversation) => conversation.handoffAt !== null)) {
+    const handoffAt = c.handoffAt;
+    const marker = c.messages.some((m) => m.authorType === "SYSTEM" && m.content === HANDOFF_SYSTEM_MESSAGE && sameTime(m.createdAt, handoffAt));
+    check(marker, `conversa ${c.id}: sem mensagem de transferência em handoffAt`);
+  }
+
+  for (const reason of ["EMPLOYEE_REQUEST", "LOW_CONFIDENCE", "CRITICAL", "OVERDUE"] as const) {
+    const waiting = conversations.find((c) => c.status === "WAITING_ANALYST" && c.handoffReason === reason);
+    check(waiting !== undefined && waiting.handoffSummary !== null && waiting.handoffAt !== null, `sem conversa aguardando analista por ${reason}`);
   }
 
   const nearLimit = conversations.find((c) => c.id === NEAR_LIMIT_CONVERSATION_ID);

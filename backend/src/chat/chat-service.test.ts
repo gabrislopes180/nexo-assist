@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ConversationService, TurnReservation } from "../conversations/conversation-service.js";
 import type { ProposedTicketDraft } from "../shared/chat.js";
-import { TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
+import {
+  TicketServiceUnavailableError,
+  type ResolvedTicketReader,
+  type TicketAvailability,
+  type TicketCodeReader,
+} from "../tickets/ticket-service.js";
 import type { SessionUser } from "../shared/session.js";
 import { agentTraceSchema, type AgentTrace } from "../shared/transparency.js";
 import { AgentUnavailableError, createProvisionalAgentRunner, type AgentRunner } from "./agent-runner.js";
@@ -31,7 +36,7 @@ function fakeConversations(overrides: Partial<ConversationService> = {}) {
     },
     completeTurn: () => {
       log.push("completeTurn");
-      return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null });
+      return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WITH_AGENT" });
     },
     readDraft: () => Promise.reject(new Error("não usado aqui")),
     confirmDraft: () => Promise.reject(new Error("não usado aqui")),
@@ -47,9 +52,13 @@ function fakeConversations(overrides: Partial<ConversationService> = {}) {
 
 const okRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null }) };
 const failingRunner: AgentRunner = { runTurn: () => Promise.reject(new AgentUnavailableError()) };
-type Tickets = TicketCodeReader & TicketAvailability;
+type Tickets = TicketCodeReader & ResolvedTicketReader & TicketAvailability;
 const ensureAvailable = () => Promise.resolve();
-const unusedTickets: Tickets = { findOpenTicketByCode: () => Promise.reject(new Error("não usado aqui")), ensureAvailable };
+const unusedTickets: Tickets = {
+  findOpenTicketByCode: () => Promise.reject(new Error("não usado aqui")),
+  findResolvedTicketByCode: () => Promise.reject(new Error("não usado aqui")),
+  ensureAvailable,
+};
 
 type ServiceDeps = Parameters<typeof createService>[0];
 const createChatService = (deps: Omit<ServiceDeps, "tickets"> & Partial<Pick<ServiceDeps, "tickets">>) =>
@@ -141,14 +150,39 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       completeTurn: (_reservation, reply) => {
         received.push(reply.ticketDraft);
-        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: "d1" });
+        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: "d1", conversationStatus: "WITH_AGENT" });
       },
     });
     const agentRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, ticketDraft }) };
-    const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), ensureAvailable };
+    const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), findResolvedTicketByCode: unusedTickets.findResolvedTicketByCode, ensureAvailable };
     const response = await createChatService({ conversations, agentRunner, tickets }).sendMessage(employee, { message: "oi" });
     assert.deepEqual(received, [ticketDraft]);
     assert.deepEqual(response.ticketDraft, { id: "d1", ...ticketDraft });
+  });
+
+  it("usa no envelope o estado da conversa relido ao fim do turno, não o da reserva", async () => {
+    const { conversations } = fakeConversations({
+      completeTurn: () => Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WAITING_ANALYST" }),
+    });
+    const agentRunner: AgentRunner = {
+      runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, handoff: { reason: "EMPLOYEE_REQUEST", summary: "Pediu analista." } }),
+    };
+    const response = await createChatService({ conversations, agentRunner }).sendMessage(employee, { message: "oi" });
+    assert.equal(response.conversation.status, "WAITING_ANALYST");
+  });
+
+  it("repassa a transferência válida ao completeTurn", async () => {
+    const received: unknown[] = [];
+    const { conversations } = fakeConversations({
+      completeTurn: (_reservation, reply) => {
+        received.push(reply.handoff);
+        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WAITING_ANALYST" });
+      },
+    });
+    const handoff = { reason: "LOW_CONFIDENCE", summary: "  Não entendi o pedido.  " } as const;
+    const agentRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, handoff }) };
+    await createChatService({ conversations, agentRunner }).sendMessage(employee, { message: "oi" });
+    assert.deepEqual(received, [{ reason: "LOW_CONFIDENCE", summary: "Não entendi o pedido." }]);
   });
 
   it("devolve as respostas rápidas do turno", async () => {
@@ -175,7 +209,7 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       completeTurn: (_reservation, reply) => {
         replies.push(reply);
-        return Promise.resolve({ id: "m2", content: reply.content, trace: reply.trace, createdAt: NOW, draftId: null });
+        return Promise.resolve({ id: "m2", content: reply.content, trace: reply.trace, createdAt: NOW, draftId: null, conversationStatus: "WITH_AGENT" });
       },
     });
     const agentRunner: AgentRunner = {
@@ -188,7 +222,7 @@ describe("ChatService", () => {
           ticketDraft: { kind: "COMPLEMENT", ticket, content: "mais" },
         }),
     };
-    const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(null), ensureAvailable };
+    const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(null), findResolvedTicketByCode: unusedTickets.findResolvedTicketByCode, ensureAvailable };
     const response = await createChatService({ conversations, agentRunner, tickets }).sendMessage(employee, { message: "oi" });
     assert.notEqual(response.message.content, "Confira e confirme");
     assert.equal(response.ticketDraft, null);
@@ -233,7 +267,7 @@ describe("ChatService", () => {
           return Promise.reject(new Error("não deveria chamar"));
         },
       });
-      const tickets: Tickets = { findOpenTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()), ensureAvailable };
+      const tickets: Tickets = { findOpenTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()), findResolvedTicketByCode: unusedTickets.findResolvedTicketByCode, ensureAvailable };
       const service = createChatService({ conversations, agentRunner: okRunner, tickets });
       await assert.rejects(service.confirmDraft(employee, "d1", { kind: "COMPLEMENT", content: "x" }), TicketServiceUnavailableError);
       assert.deepEqual(calls, []);
@@ -244,13 +278,17 @@ describe("ChatService", () => {
       const ticket = { code: "INC-1" } as never;
       const { conversations } = fakeConversations({
         readDraft: () => Promise.resolve(draft),
-        confirmDraft: () => Promise.resolve({ message: stored, ticket }),
+        confirmDraft: () => Promise.resolve({ message: stored, ticket, conversation: { id: "c1", status: "WITH_AGENT" as const } }),
         cancelDraft: () => Promise.resolve({ message: stored }),
       });
-      const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), ensureAvailable };
+      const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), findResolvedTicketByCode: unusedTickets.findResolvedTicketByCode, ensureAvailable };
       const service = createChatService({ conversations, agentRunner: runner, tickets });
       const view = { id: "m3", authorType: "AGENT", content: "ok", trace, createdAt: NOW.toISOString() };
-      assert.deepEqual(await service.confirmDraft(employee, "d1", { kind: "COMPLEMENT", content: "x" }), { message: view, ticket });
+      assert.deepEqual(await service.confirmDraft(employee, "d1", { kind: "COMPLEMENT", content: "x" }), {
+        message: view,
+        ticket,
+        conversation: { id: "c1", status: "WITH_AGENT" },
+      });
       assert.deepEqual(await service.cancelDraft(employee, "d1"), { message: view });
     });
   });

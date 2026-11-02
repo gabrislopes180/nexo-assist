@@ -118,7 +118,7 @@ Os componentes ficam em `window.NexoAssist` e precisam do React 18 na página. S
 - Espera do agent: a linha da trilha com "Nexo Assist" e um `StatusBadge` `info` com ponto pulsante ("Analisando seu pedido…"), sem bolha. Depois de 10 s, o texto muda para "Ainda estou trabalhando nisso…".
 - Falha de envio: linha em `caption` `danger-text` sob a bolha do funcionário, que não muda de cor, com "Tentar de novo" quando repetir faz sentido.
 - Composer bloqueado no chat: aviso neutro e "Iniciar nova conversa" no lugar do contador (ver `components/Composer.md`).
-- Rascunho no chat: edição dentro do card, estados depois de confirmar ou cancelar e linha de falha no card (ver `components/TicketCard.md`). O campo de várias linhas (`TextArea`) segue o `TextField`, sem ícone.
+- Rascunho no chat (abrir, complementar e reabrir chamado): edição dentro do card, estados depois de confirmar ou cancelar e linha de falha no card (ver `components/TicketCard.md`). O campo de várias linhas (`TextArea`) segue o `TextField`, sem ícone.
 - `profile-width`: coluna da página Meu perfil, medida em `screens/06-meu-perfil.png`.
 - `on-ink-surface`, `login-form-width` e `login-preview-width`: valores medidos em `screens/01-login.png`. A borda do card de prévia e a bolha do agent reaproveitam `on-ink-rule`.
 

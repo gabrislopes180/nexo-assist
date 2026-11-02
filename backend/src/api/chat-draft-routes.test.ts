@@ -12,7 +12,7 @@ import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft, TicketSummary } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
-import { createTicketService, TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
+import { createTicketService, TicketServiceUnavailableError, type ResolvedTicketReader, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
@@ -33,7 +33,7 @@ describe("rotas de rascunho do chat", () => {
   let summary: TicketSummary;
 
   const cookieOf = async (userId: string) => `nexo_session=${await issueSessionToken({ userId, secret: SECRET, now: new Date() })}`;
-  const proposal = (): ProposedTicketDraft => ({ kind: "COMPLEMENT", ticket: summary, content: "Proposta do agent" });
+  const proposal = (): Extract<ProposedTicketDraft, { kind: "COMPLEMENT" }> => ({ kind: "COMPLEMENT", ticket: summary, content: "Proposta do agent" });
 
   function post(path: string, body: unknown, cookie: string | undefined = employeeCookie): Promise<Response> {
     return fetch(`${url}${path}`, {
@@ -88,7 +88,8 @@ describe("rotas de rascunho do chat", () => {
     assert.ok(found);
     summary = found;
 
-    const tickets: TicketCodeReader & TicketAvailability = {
+    const tickets: TicketCodeReader & ResolvedTicketReader & TicketAvailability = {
+      findResolvedTicketByCode: (...args) => real.findResolvedTicketByCode(...args),
       findOpenTicketByCode: (...args) => (ticketsDown ? Promise.reject(new TicketServiceUnavailableError()) : real.findOpenTicketByCode(...args)),
       ensureAvailable: () => real.ensureAvailable(),
     };
@@ -187,7 +188,7 @@ describe("rotas de rascunho do chat", () => {
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("cache-control"), "no-store");
       const body = (await res.json()) as ConfirmDraftResponse;
-      assert.deepEqual(Object.keys(body).sort(), ["message", "ticket"]);
+      assert.deepEqual(Object.keys(body).sort(), ["conversation", "message", "ticket"]);
       assert.equal(body.ticket.code, CODE);
       assert.equal(body.message.authorType, "AGENT");
       assert.equal(llmCalls, 0);

@@ -4,15 +4,25 @@ import type { HistoryMessage } from "../conversations/conversation-service.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.js";
 import { STRUCTURED_OUTPUT_INSTRUCTIONS } from "./instructions.js";
+import { trackModelCalls, type ModelCallStats } from "./model-calls.js";
 import { createNexoAgent, type NexoAgentDeps } from "./nexo-agent.js";
 import { createTurnRecorder, type TurnContextValues } from "./tools/turn-recorder.js";
-import { composeReply, llmDecisionSchema, parseDecision, ticketCodesIn } from "./trace.js";
+import { codesShownAsDuplicates, composeReply, llmDecisionSchema, parseDecision, relatedCodeFrom } from "./trace.js";
 
 const MAX_STEPS = 4;
 const MODEL_SETTINGS = { maxOutputTokens: 1024, maxRetries: 1, temperature: 0 };
 
 /** Sem texto do usuário: só o que serve para acompanhar custo e latência. */
-export type TurnMetrics = { latencyMs: number; steps: number | null; totalTokens: number | null; finishReason: string };
+export type TurnMetrics = {
+  latencyMs: number;
+  steps: number | null;
+  totalTokens: number | null;
+  finishReason: string;
+  /** Chamadas ao provedor, contando os retries internos do Mastra. */
+  modelCalls: number;
+  /** Nome, código e status de cada chamada que falhou; nunca a mensagem. */
+  failedCalls: string[];
+};
 
 export type AgentRunnerDeps = NexoAgentDeps & { timeoutMs?: number; onTurnMetrics?: (metrics: TurnMetrics) => void };
 
@@ -55,16 +65,23 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
       requestContext.set("actorId", input.actor.id);
       requestContext.set("actorName", input.actor.name);
       requestContext.set("message", input.message);
-      requestContext.set("shownCodes", input.history.flatMap(({ authorType, content }) => (authorType === "AGENT" ? ticketCodesIn(content) : [])));
+      const agentMessages = input.history.flatMap(({ authorType, content }) => (authorType === "AGENT" ? [content] : []));
+      // Só códigos de avisos de parecido: um código citado numa consulta de status não foi oferecido como duplicado.
+      requestContext.set("shownCodes", codesShownAsDuplicates(agentMessages));
+      requestContext.set("relatedCode", relatedCodeFrom(agentMessages));
       requestContext.set("recorder", recorder);
 
       const startedAt = Date.now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const { signal } = controller;
-      let metrics: Omit<TurnMetrics, "latencyMs"> = { steps: null, totalTokens: null, finishReason: "failed" };
+      let metrics: Pick<TurnMetrics, "steps" | "totalTokens" | "finishReason"> = { steps: null, totalTokens: null, finishReason: "failed" };
+      const calls: ModelCallStats = { calls: 0, failures: [] };
       try {
-        const output = await Promise.race([generate(input, requestContext, signal), rejectOnAbort(signal)]);
+        const output = await Promise.race([
+          trackModelCalls(() => generate(input, requestContext, signal), calls).then(({ result }) => result),
+          rejectOnAbort(signal),
+        ]);
         metrics = { steps: output.steps.length, totalTokens: output.usage.totalTokens ?? null, finishReason: output.finishReason ?? "unknown" };
         // Ao abortar, `generate` não lança: devolve `aborted` com texto vazio.
         if (output.finishReason === "aborted" || output.finishReason === "error") throw new AgentUnavailableError();
@@ -83,7 +100,7 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
         throw new AgentUnavailableError();
       } finally {
         clearTimeout(timer);
-        onTurnMetrics?.({ latencyMs: Date.now() - startedAt, ...metrics });
+        onTurnMetrics?.({ latencyMs: Date.now() - startedAt, ...metrics, modelCalls: calls.calls, failedCalls: [...calls.failures] });
       }
     },
   };

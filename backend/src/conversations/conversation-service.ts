@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
-import type { ConfirmDraftRequest, ProposedTicketDraft } from "../shared/chat.js";
+import type { ConfirmDraftRequest, HandoffProposal, ProposedTicketDraft } from "../shared/chat.js";
 import type { ConfirmableDraft } from "../shared/conversation-draft.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { CONVERSATION_MESSAGE_LIMIT, ConversationNotWithAgentError } from "./conversation-rules.js";
+import { transferToAnalyst } from "./handoff.js";
 import { cancelPendingDraft, confirmPendingDraft, readPendingDraft, type ConfirmedDraft, type StoredAgentMessage } from "./ticket-draft.js";
 
 export class ConversationNotFoundError extends Error {
@@ -50,13 +51,19 @@ export type AgentReply = {
   trace: AgentTrace;
   /** Sem rascunho, o anterior continua valendo; um novo o substitui. */
   ticketDraft?: ProposedTicketDraft | null;
+  /** Transfere na mesma transação; o rascunho do turno e o pendente são descartados. */
+  handoff?: HandoffProposal | null;
   now: Date;
 };
 
 export type ConversationService = {
   startTurn(ownerId: string, input: { conversationId?: string; content: string; now: Date }): Promise<TurnReservation>;
   /** Grava resposta e rascunho na mesma transação: turno que falha não deixa rascunho. */
-  completeTurn(reservation: TurnReservation, reply: AgentReply): Promise<StoredAgentMessage & { draftId: string | null }>;
+  /** Devolve o estado da conversa relido no fim da transação. */
+  completeTurn(
+    reservation: TurnReservation,
+    reply: AgentReply,
+  ): Promise<StoredAgentMessage & { draftId: string | null; conversationStatus: ConversationStatus }>;
   abortTurn(reservation: TurnReservation): Promise<void>;
   readDraft(ownerId: string, draftId: string): Promise<ConfirmableDraft>;
   confirmDraft(ownerId: string, draftId: string, request: ConfirmDraftRequest, now: Date): Promise<ConfirmedDraft>;
@@ -159,6 +166,7 @@ async function continueConversationTurn(
 function toPendingDraft(proposal: ProposedTicketDraft, now: Date): ConfirmableDraft {
   const base = { draftId: randomUUID(), createdAt: now.toISOString() };
   if (proposal.kind === "CREATE") return { ...base, ...proposal };
+  if (proposal.kind === "REOPEN") return { ...base, kind: proposal.kind, ticketCode: proposal.ticket.code, reason: proposal.reason };
   return { ...base, kind: proposal.kind, ticketCode: proposal.ticket.code, content: proposal.content };
 }
 
@@ -173,18 +181,22 @@ export function createConversationService(client: PrismaClient): ConversationSer
       );
     },
 
-    completeTurn({ conversationId }, { content, trace, ticketDraft, now }) {
-      const draft = ticketDraft ? toPendingDraft(ticketDraft, now) : null;
+    completeTurn({ conversationId }, { content, trace, ticketDraft, handoff, now }) {
+      const draft = ticketDraft && !handoff ? toPendingDraft(ticketDraft, now) : null;
       return client.$transaction(async (tx) => {
         const message = await tx.message.create({
           data: { conversationId, authorType: "AGENT", authorId: null, content, trace, createdAt: now },
           select: { id: true, createdAt: true },
         });
-        await tx.conversation.update({
-          where: { id: conversationId },
+        // Condicional: outra operação (confirmação CRITICAL, outra aba) pode ter transferido durante a LLM.
+        const { count } = await tx.conversation.updateMany({
+          where: { id: conversationId, status: "WITH_AGENT" },
           data: { lastMessageAt: now, ...(draft ? { pendingDraft: draft, pendingDraftId: draft.draftId } : {}) },
         });
-        return { id: message.id, content, trace, createdAt: message.createdAt, draftId: draft?.draftId ?? null };
+        if (count === 0) throw new ConversationNotWithAgentError();
+        if (handoff) await transferToAnalyst(tx, { conversationId, reason: handoff.reason, summary: handoff.summary, at: now });
+        const { status } = await tx.conversation.findUniqueOrThrow({ where: { id: conversationId }, select: { status: true } });
+        return { id: message.id, content, trace, createdAt: message.createdAt, draftId: draft?.draftId ?? null, conversationStatus: status };
       });
     },
 
@@ -208,9 +220,11 @@ export function createConversationService(client: PrismaClient): ConversationSer
       }
       await client.$transaction(async (tx) => {
         await tx.message.delete({ where: { id: employeeMessageId } });
+        // Outra operação pode ter gravado depois da reserva (ex.: a mensagem SYSTEM de uma transferência).
+        const latest = await tx.message.findFirst({ where: { conversationId }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
         await tx.conversation.update({
           where: { id: conversationId },
-          data: { messageCount: { decrement: 1 }, lastMessageAt: previousLastMessageAt },
+          data: { messageCount: { decrement: 1 }, lastMessageAt: latest?.createdAt ?? previousLastMessageAt },
         });
       });
     },

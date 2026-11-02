@@ -107,6 +107,21 @@ export function TicketDraftEditor({
               Tipo, categoria e prioridade ficam como no rascunho.
             </p>
           </>
+        ) : values.kind === "REOPEN" ? (
+          <>
+            <TextArea
+              label="Motivo"
+              rows={4}
+              value={values.reason}
+              error={errors.reason}
+              onChange={(event) =>
+                update({ ...values, reason: event.target.value }, "reason")
+              }
+            />
+            <p className="text-caption text-ink-3">
+              A prioridade original é mantida, e o prazo recomeça ao confirmar.
+            </p>
+          </>
         ) : (
           <TextArea
             label="Complemento"

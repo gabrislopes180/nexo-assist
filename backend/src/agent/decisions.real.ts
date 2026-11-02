@@ -7,7 +7,7 @@
 import { AgentUnavailableError } from "../chat/agent-runner.js";
 import type { HistoryMessage } from "../conversations/conversation-service.js";
 import type { TicketLookupCriteria, TicketLookupResult } from "../shared/chat.js";
-import { TicketServiceUnavailableError, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
+import { TicketServiceUnavailableError, type ResolvedTicketReader, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
 import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
 import { loadAgentConfig } from "./config.js";
 
@@ -44,7 +44,8 @@ const CASES: readonly Case[] = [
 let lookupResult: TicketLookupResult = NO_MATCH;
 let codeReaderDown = false;
 const lookups: { ownerId: string; criteria: TicketLookupCriteria }[] = [];
-const ticketService: TicketService & TicketCodeReader & SimilarTicketReader = {
+const ticketService: TicketService & TicketCodeReader & SimilarTicketReader & ResolvedTicketReader = {
+  findResolvedTicketByCode: () => Promise.resolve(null),
   findSimilarTickets: () => Promise.resolve([]),
   lookupOpenTickets(ownerId, criteria) {
     lookups.push({ ownerId, criteria });

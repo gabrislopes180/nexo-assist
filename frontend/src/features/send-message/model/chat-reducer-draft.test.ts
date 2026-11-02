@@ -260,6 +260,46 @@ describe("chatReducer: rascunhos", () => {
     expect(agentItem(picked, "a1").selectedReply).toBe("Só eu");
   });
 
+  it("reabertura: guarda o motivo, edita, confirma e trata 409", () => {
+    const reopenDraft: TicketDraft = {
+      id: "r1",
+      kind: "REOPEN",
+      ticket: { ...ticket, status: "RESOLVED", statusLabel: "Resolvido", canReopen: true },
+      reason: "Voltou a falhar.",
+      dueAtPreview: "2026-10-20T16:00:00.000Z",
+    };
+    const drafted = exchange(createInitialChatState(), 1, turn({ ticketDraft: reopenDraft }));
+    expect(agentItem(drafted, "a1").draft?.values).toEqual({
+      kind: "REOPEN",
+      reason: "Voltou a falhar.",
+    });
+
+    const edited = chatReducer(drafted, {
+      type: "draftEdited",
+      id: "a1",
+      values: { kind: "REOPEN", reason: "Senha expira de novo." },
+    });
+    const started = chatReducer(edited, {
+      type: "draftActionStarted",
+      id: "a1",
+      action: "confirm",
+    });
+
+    const blocked = chatReducer(started, {
+      type: "draftFailed",
+      failure: failure({ retryable: false, unavailable: true }),
+    });
+    expect(agentItem(blocked, "a1").draft?.status).toBe("unavailable");
+
+    const reopened = chatReducer(started, {
+      type: "draftConfirmed",
+      id: "a2",
+      result: { message: agentMessage("Chamado reaberto."), ticket },
+    });
+    expect(agentItem(reopened, "a1").draft?.status).toBe("confirmed");
+    expect(reopened.items.at(-1)).toMatchObject({ ticket });
+  });
+
   it("reset limpa a operação de rascunho", () => {
     const started = chatReducer(withDraft(), {
       type: "draftActionStarted",

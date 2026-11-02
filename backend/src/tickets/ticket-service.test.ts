@@ -148,9 +148,59 @@ describe("TicketService", () => {
       assert.deepEqual(await service.findSimilarTickets(ownerId, [], NOW), []);
     });
 
+    it("only reopenable filtra antes do corte: 6 abertos parecidos não escondem o reabrível", async () => {
+      for (let i = 1; i <= 6; i++) await createTicket(ownerId, `INC-${i}`, "IN_PROGRESS", hoursFromNow(i));
+      await createResolved(ownerId, "INC-7", resolvedAgo(1));
+      await createResolved(ownerId, "INC-8", resolvedAgo(8));
+      const all = await service.findSimilarTickets(ownerId, ["título"], NOW);
+      assert.equal(all.length, 5);
+      assert.equal(all.some((t) => t.code === "INC-7"), false);
+      const reopenable = await service.findSimilarTickets(ownerId, ["título"], NOW, { only: "reopenable" });
+      assert.deepEqual(reopenable.map((t) => [t.code, t.status, t.canReopen]), [["INC-7", "RESOLVED", true]]);
+    });
+
     it("corta em 5", async () => {
       for (let i = 1; i <= 7; i++) await createTicket(ownerId, `INC-${i}`, "IN_PROGRESS", hoursFromNow(i));
       assert.equal((await service.findSimilarTickets(ownerId, ["título"], NOW)).length, 5);
+    });
+  });
+
+  describe("findResolvedTicketByCode", () => {
+    const resolvedAgo = (days: number) => new Date(NOW.getTime() - days * 86_400_000);
+
+    async function createResolved(owner: string, code: string, resolvedAt: Date) {
+      const ticket = await createTicket(owner, code, "RESOLVED", null);
+      await client.ticket.update({ where: { id: ticket.id }, data: { resolvedAt } });
+    }
+
+    it("devolve resolvido reabrível, sem diferenciar caixa e sem description", async () => {
+      await createResolved(ownerId, "INC-1", resolvedAgo(1));
+      const found = await service.findResolvedTicketByCode(ownerId, "inc-1", NOW);
+      assert.equal(found?.canReopen, true);
+      assert.equal(found?.ticket.code, "INC-1");
+      assert.equal(found?.ticket.status, "RESOLVED");
+      assert.equal(found?.ticket.canReopen, true);
+      assert.equal(found && "description" in found.ticket, false);
+    });
+
+    it("marca canReopen false a 8 dias e true a exatos 7", async () => {
+      await createResolved(ownerId, "INC-1", resolvedAgo(8));
+      await createResolved(ownerId, "INC-2", resolvedAgo(7));
+      assert.equal((await service.findResolvedTicketByCode(ownerId, "INC-1", NOW))?.canReopen, false);
+      assert.equal((await service.findResolvedTicketByCode(ownerId, "INC-2", NOW))?.canReopen, true);
+    });
+
+    it("para chamado aberto devolve o status aberto e canReopen false", async () => {
+      await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      const found = await service.findResolvedTicketByCode(ownerId, "INC-1", NOW);
+      assert.equal(found?.ticket.status, "IN_PROGRESS");
+      assert.equal(found?.canReopen, false);
+    });
+
+    it("devolve null para inexistente ou de outro dono", async () => {
+      await createResolved(otherOwnerId, "INC-1", resolvedAgo(1));
+      assert.equal(await service.findResolvedTicketByCode(ownerId, "INC-1", NOW), null);
+      assert.equal(await service.findResolvedTicketByCode(ownerId, "INC-9", NOW), null);
     });
   });
 

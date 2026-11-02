@@ -140,6 +140,14 @@ describe("draftTicket", () => {
     assert.equal(proposalOf(recorder)?.affectedScope, "TEAM");
   });
 
+  it("Não sei com CRITICAL: motivo do teto não põe palavras na boca do usuário", async () => {
+    const { ticketService } = fakeReader();
+    const recorder = createTurnRecorder();
+    await run(ticketService, { ...base, priority: "CRITICAL" }, contextOf({ recorder, message: "Não sei" }));
+    assert.equal(proposalOf(recorder)?.priority, "HIGH");
+    assert.equal(proposalOf(recorder)?.priorityReason, "não foi possível confirmar que afeta mais pessoas");
+  });
+
   it("Não sei vira INDIVIDUAL e registra que não soube informar", async () => {
     const { ticketService } = fakeReader();
     const recorder = createTurnRecorder();

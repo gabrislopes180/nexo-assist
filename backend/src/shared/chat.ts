@@ -88,8 +88,18 @@ export const proposedComplementDraftSchema = z.strictObject({
 
 export const proposedCreateDraftSchema = createDraftSchema.omit({ draftId: true, createdAt: true });
 
+export const proposedReopenDraftSchema = z.strictObject({
+  kind: z.literal("REOPEN"),
+  ticket: similarTicketSchema,
+  reason: userText,
+});
+
 /** O que o agent propõe; o id é gerado no backend, ao salvar o rascunho na conversa. */
-export const proposedAnyDraftSchema = z.discriminatedUnion("kind", [proposedComplementDraftSchema, proposedCreateDraftSchema]);
+export const proposedAnyDraftSchema = z.discriminatedUnion("kind", [
+  proposedComplementDraftSchema,
+  proposedCreateDraftSchema,
+  proposedReopenDraftSchema,
+]);
 
 export type ProposedTicketDraft = z.infer<typeof proposedAnyDraftSchema>;
 
@@ -101,6 +111,7 @@ export const ticketDraftSchema = z.discriminatedUnion("kind", [
     id: z.string().min(1),
     dueAtPreview: z.iso.datetime(),
   }),
+  z.strictObject({ ...proposedReopenDraftSchema.shape, id: z.string().min(1), dueAtPreview: z.iso.datetime() }),
 ]);
 
 export type TicketDraft = z.infer<typeof ticketDraftSchema>;
@@ -121,11 +132,23 @@ export const confirmDraftRequestSchema = z.discriminatedUnion("kind", [
     affectedScope: createDraftSchema.shape.affectedScope,
     affectedDescription: createDraftSchema.shape.affectedDescription,
   }),
+  z.strictObject({ kind: z.literal("REOPEN"), reason: userText }),
 ]);
 
 export type ConfirmDraftRequest = z.infer<typeof confirmDraftRequestSchema>;
 
 export const cancelDraftRequestSchema = z.strictObject({}).optional();
+
+/**
+ * Transferência proposta pelo agent. `CRITICAL` fica de fora: quem transfere por criticidade
+ * é a confirmação do chamado, no backend.
+ */
+export const handoffProposalSchema = z.strictObject({
+  reason: z.enum(["EMPLOYEE_REQUEST", "OVERDUE", "LOW_CONFIDENCE"]),
+  summary: boundedText(1000),
+});
+
+export type HandoffProposal = z.infer<typeof handoffProposalSchema>;
 
 export type ChatConversationView = {
   id: string;
@@ -153,6 +176,11 @@ export type ChatResponse = {
   quickReplies: string[] | null;
 };
 
-export type ConfirmDraftResponse = { message: ChatMessageView; ticket: TicketSummary };
+/** `conversation.status` deixa o frontend travar o composer quando a confirmação transfere a conversa. */
+export type ConfirmDraftResponse = {
+  message: ChatMessageView;
+  ticket: TicketSummary;
+  conversation: { id: string; status: ConversationStatus };
+};
 
 export type CancelDraftResponse = { message: ChatMessageView };

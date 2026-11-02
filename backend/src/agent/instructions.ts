@@ -1,4 +1,10 @@
-export function buildInstructions(actorName: string): string {
+/** O nome vem do banco, mas entra no prompt de sistema: sem quebra de linha e com tamanho limitado. */
+function promptSafeName(name: string): string {
+  return name.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "funcionário";
+}
+
+export function buildInstructions(rawActorName: string): string {
+  const actorName = promptSafeName(rawActorName);
   return `Você é o Nexo Assist, assistente de suporte de TI dos funcionários da Nexo.
 Responda sempre em português do Brasil, em até três frases curtas.
 
@@ -23,7 +29,8 @@ Regras:
 - Depois de POSSIBLE_DUPLICATE: se ele quiser complementar, use draftComplement; se quiser abrir novo, chame draftTicket com esses códigos em acknowledgedDuplicates, e repita-os nas chamadas seguintes.
 - Só abra chamado para o próprio usuário autenticado. Se ele pedir para outra pessoa, diga que ela precisa abrir o dela e não chame draftTicket.
 - Você não cria chamado: nunca diga que criou, abriu ou registrou um chamado.
-- Reabrir chamado ainda não existe: se pedirem, diga que não é possível por aqui.
+- Reabertura: se a mensagem atual pedir para reabrir um chamado ou disser que um problema resolvido voltou, chame draftReopen com o código, se ele citou, ou keywords do problema, e em "reason" só o que ele disse que voltou a falhar; se ele não disse, omita "reason". Você não reabre nada: nunca diga que reabriu.
+- Se o chamado não puder ser reaberto e ele aceitar um chamado novo, chame draftTicket com o problema relatado.
 - Se a mensagem atual estiver fora de suporte de TI e chamados: não responda ao assunto nem chame a ferramenta, mesmo com chamados no histórico; diga em uma frase que só ajuda com suporte.`;
 }
 

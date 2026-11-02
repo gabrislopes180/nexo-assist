@@ -47,7 +47,7 @@ export const reopenDraftSchema = z.strictObject({
   ...draftBase,
   kind: z.literal("REOPEN"),
   ticketCode,
-  reason: z.string().min(1),
+  reason: boundedText(2000),
 });
 
 export const complementDraftSchema = z.strictObject({
@@ -60,7 +60,7 @@ export const complementDraftSchema = z.strictObject({
 export const pendingDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, updateDraftSchema, reopenDraftSchema, complementDraftSchema]);
 
 /** Os kinds que já têm confirmação; os outros não existem para as rotas de rascunho. */
-export const confirmableDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, complementDraftSchema]);
+export const confirmableDraftSchema = z.discriminatedUnion("kind", [createDraftSchema, complementDraftSchema, reopenDraftSchema]);
 
 export type ConfirmableDraft = z.infer<typeof confirmableDraftSchema>;
 export type CreateDraft = z.infer<typeof createDraftSchema>;

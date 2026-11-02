@@ -207,3 +207,33 @@ describe("proposedAnyDraftSchema de CREATE", () => {
     }
   });
 });
+
+describe("rascunho de reabertura", () => {
+  const ticket = {
+    code: "INC-1",
+    type: "INC",
+    category: "HARDWARE",
+    priority: "MEDIUM",
+    status: "RESOLVED",
+    statusLabel: "Resolvido",
+    title: "Teclado",
+    createdAt: "2026-11-01T12:00:00.000Z",
+    dueAt: null,
+    overdue: false,
+    canReopen: true,
+  };
+
+  it("aceita a proposta e o body de confirmação", () => {
+    assert.equal(proposedAnyDraftSchema.safeParse({ kind: "REOPEN", ticket, reason: "voltou" }).success, true);
+    assert.deepEqual(confirmDraftRequestSchema.parse({ kind: "REOPEN", reason: "  voltou  " }), { kind: "REOPEN", reason: "voltou" });
+  });
+
+  it("recusa motivo vazio, longo ou com NUL, e campos extras", () => {
+    for (const reason of ["   ", "a".repeat(2001), "a\u0000b"]) {
+      assert.equal(proposedAnyDraftSchema.safeParse({ kind: "REOPEN", ticket, reason }).success, false);
+      assert.equal(confirmDraftRequestSchema.safeParse({ kind: "REOPEN", reason }).success, false);
+    }
+    assert.equal(confirmDraftRequestSchema.safeParse({ kind: "REOPEN", reason: "a", ticketCode: "INC-1" }).success, false);
+    assert.equal(proposedAnyDraftSchema.safeParse({ kind: "REOPEN", ticket, reason: "a", id: "1" }).success, false);
+  });
+});

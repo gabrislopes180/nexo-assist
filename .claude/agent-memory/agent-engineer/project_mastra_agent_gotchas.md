@@ -20,6 +20,8 @@ Fatos verificados em 2026-11-01 com `@mastra/core` 1.81.0:
 - Erro transitório do provedor custa cerca de 11 s por causa do retry e vira 503 (`AI_APICallError`, sem status no log seguro). Provável causa dos turnos de 9 a 12 s; não provado.
 - `findSimilarTickets` casa com uma keyword só, então uma palavra genérica gera falso duplicado (mouse caiu em chamado de Outlook).
 
+- Para contar retries, `model-calls.ts` envolve o modelo num Proxy (`ModelRouterLanguageModel` + `AsyncLocalStorage`), porque `onRequestRetry` é interno do Mastra. Erro que não é `APICallError` também é retentado (`maxRetries: 1` dá 2 chamadas). Falta validar o Proxy com a LLM real.
+
 Modelo padrão trocado para `google/gemini-3.5-flash-lite`: passo com tool de 0,7 a 1,8 s, turno de 1 a 4 s.
 
 **Why:** `gemini-3.8-flash` tinha mais de 40 s em amostra antiga e não pôde ser medido de novo por falta de cota; a comparação é entre sessões.

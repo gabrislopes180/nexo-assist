@@ -106,6 +106,12 @@ describe("pendingDraftSchema", () => {
     assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "COMPLEMENT", ticketCode: "INC-1", content: "" }).success, false);
   });
 
+  it("REOPEN exige motivo de 1 a 2000 caracteres sem NUL", () => {
+    for (const reason of ["", "   ", "a".repeat(2001), "a\u0000b"]) {
+      assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "REOPEN", ticketCode: "INC-1", reason }).success, false);
+    }
+  });
+
   it("aceita UPDATE e REOPEN", () => {
     assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "UPDATE", ticketCode: "INC-20311", comment: "c" }).success, true);
     assert.equal(pendingDraftSchema.safeParse({ ...common, kind: "REOPEN", ticketCode: "INC-20150", reason: "voltou" }).success, true);

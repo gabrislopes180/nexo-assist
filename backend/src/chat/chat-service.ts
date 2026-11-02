@@ -1,7 +1,8 @@
 import { CONVERSATION_MESSAGE_LIMIT, remainingMessages } from "../conversations/conversation-rules.js";
 import type { ConversationService, StoredAgentMessage, TurnReservation } from "../conversations/conversation-service.js";
-import { DraftKindMismatchError, TicketNotOpenError } from "../conversations/ticket-draft.js";
+import { DraftKindMismatchError, TicketNotOpenError, TicketNotReopenableError } from "../conversations/ticket-draft.js";
 import {
+  handoffProposalSchema,
   proposedAnyDraftSchema,
   quickRepliesSchema,
   type CancelDraftResponse,
@@ -18,7 +19,12 @@ import type { SessionUser } from "../shared/session.js";
 import { agentTraceSchema, type AgentAction, type AgentTrace } from "../shared/transparency.js";
 import { computeDueAt } from "../tickets/sla.js";
 import { capPriority } from "../tickets/ticket-rules.js";
-import { TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
+import {
+  TicketServiceUnavailableError,
+  type ResolvedTicketReader,
+  type TicketAvailability,
+  type TicketCodeReader,
+} from "../tickets/ticket-service.js";
 import { AgentUnavailableError, type AgentRunner } from "./agent-runner.js";
 
 export class EmployeeOnlyError extends Error {
@@ -37,7 +43,7 @@ export type ChatService = {
 type ChatServiceDeps = {
   conversations: ConversationService;
   agentRunner: AgentRunner;
-  tickets: TicketCodeReader & TicketAvailability;
+  tickets: TicketCodeReader & ResolvedTicketReader & TicketAvailability;
   now?: () => Date;
 };
 
@@ -49,9 +55,30 @@ const DRAFT_NOT_VERIFIED = {
   action: { tool: "validateTicketDraft", summary: "Chamado da proposta não está entre os abertos da pessoa; rascunho descartado.", status: "SKIPPED" },
 } as const;
 
+const DRAFT_NOT_REOPENABLE = {
+  content: "Esse chamado não pode ser reaberto agora, então nada foi preparado.",
+  action: { tool: "validateTicketDraft", summary: "Chamado da proposta não está resolvido dentro da janela de reabertura; rascunho descartado.", status: "SKIPPED" },
+} as const;
+
+const DRAFT_STILL_OPEN = {
+  content: "Esse chamado ainda está aberto, então não precisa ser reaberto. Se quiser, posso acrescentar a informação nova a ele.",
+  action: { tool: "validateTicketDraft", summary: "Chamado da proposta ainda está aberto; rascunho de reabertura descartado.", status: "SKIPPED" },
+} as const;
+
 const DRAFT_UNAVAILABLE = {
   content: "Não consegui verificar o chamado agora, então nada foi preparado. Tente novamente em instantes.",
   action: { tool: "validateTicketDraft", summary: "Serviço de chamados indisponível; rascunho descartado.", status: "ERROR" },
+} as const;
+
+const HANDOFF_FAILED = {
+  content: "Não consegui transferir a conversa para um analista agora, mas posso continuar te ajudando por aqui.",
+  action: { tool: "transferToAnalyst", summary: "Transferência proposta inválida; a conversa continua com o agent.", status: "ERROR" },
+} as const;
+
+const DRAFT_SUPERSEDED_BY_HANDOFF = {
+  tool: "validateTicketDraft",
+  summary: "Rascunho descartado porque o turno propôs uma transferência para analista.",
+  status: "SKIPPED",
 } as const;
 
 function withDiscardedDraft(trace: AgentTrace, action: AgentAction): AgentTrace {
@@ -60,6 +87,8 @@ function withDiscardedDraft(trace: AgentTrace, action: AgentAction): AgentTrace 
 
 function toDraftView(proposal: ProposedTicketDraft, id: string, at: Date): TicketDraft {
   if (proposal.kind === "COMPLEMENT") return { id, ...proposal };
+  // Mesmo cálculo de REOPENED em `applyTicketEvent`: nova janela pela prioridade original.
+  if (proposal.kind === "REOPEN") return { id, ...proposal, dueAtPreview: computeDueAt(proposal.ticket.priority, at).toISOString() };
   const { priorityReason: _priorityReason, ...visible } = proposal;
   return { id, ...visible, dueAtPreview: computeDueAt(proposal.priority, at).toISOString() };
 }
@@ -98,6 +127,11 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
       return { ticketDraft: { ...proposal, priority: capPriority(proposal.priority, proposal.affectedScope) } };
     }
     try {
+      if (proposal.kind === "REOPEN") {
+        const found = await tickets.findResolvedTicketByCode(ownerId, proposal.ticket.code, now());
+        if (found?.canReopen) return { ticketDraft: { ...proposal, ticket: found.ticket } };
+        return { discarded: found && found.ticket.status !== "RESOLVED" ? DRAFT_STILL_OPEN : DRAFT_NOT_REOPENABLE };
+      }
       const ticket = await tickets.findOpenTicketByCode(ownerId, proposal.ticket.code, now());
       return ticket ? { ticketDraft: { ...proposal, ticket } } : { discarded: DRAFT_NOT_VERIFIED };
     } catch (error) {
@@ -125,23 +159,41 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
           message,
         });
         const trace = agentTraceSchema.safeParse(result.trace);
+        if (!trace.success) throw new AgentUnavailableError();
+        const parsedHandoff = handoffProposalSchema.safeParse(result.handoff);
+        const handoff = parsedHandoff.success ? parsedHandoff.data : null;
+        const handoffFailed = result.handoff != null && !parsedHandoff.success;
+        const hadDraft = result.ticketDraft != null;
         const proposal = proposedAnyDraftSchema.nullish().safeParse(result.ticketDraft);
-        if (!trace.success || !proposal.success) throw new AgentUnavailableError();
-        const resolved = proposal.data ? await resolveProposal(actor.id, proposal.data) : null;
+        // Rascunho malformado é falha do agent, salvo quando há transferência: ela prevalece e o rascunho sai de qualquer jeito.
+        if (!proposal.success && !handoff && !handoffFailed) throw new AgentUnavailableError();
+        // A transferência prevalece sobre o rascunho; se ela falhar, o rascunho também sai, para a resposta ficar coerente.
+        const resolved = proposal.success && proposal.data && !handoff && !handoffFailed ? await resolveProposal(actor.id, proposal.data) : null;
         const discarded = resolved && "discarded" in resolved ? resolved.discarded : null;
         const ticketDraft = resolved && "ticketDraft" in resolved ? resolved.ticketDraft : null;
         const quickReplies = quickRepliesSchema.safeParse(result.quickReplies);
+        const supersededDraft = (handoff || handoffFailed) && hadDraft ? [DRAFT_SUPERSEDED_BY_HANDOFF] : [];
+        const replyTrace: AgentTrace = handoffFailed
+          ? {
+              ...trace.data,
+              actions: [...trace.data.actions, ...supersededDraft, HANDOFF_FAILED.action],
+              reason: "A transferência proposta foi descartada na validação do backend.",
+            }
+          : discarded
+            ? withDiscardedDraft(trace.data, discarded.action)
+            : { ...trace.data, actions: [...trace.data.actions, ...supersededDraft] };
         const at = now();
         const stored = await conversations.completeTurn(reservation, {
-          content: discarded ? discarded.content : result.content,
-          trace: discarded ? withDiscardedDraft(trace.data, discarded.action) : trace.data,
+          content: handoffFailed ? HANDOFF_FAILED.content : discarded ? discarded.content : result.content,
+          trace: replyTrace,
           ticketDraft,
+          handoff,
           now: at,
         });
         return {
           conversation: {
             id: reservation.conversationId,
-            status: reservation.status,
+            status: stored.conversationStatus,
             messageCount: reservation.messageCount,
             messageLimit: CONVERSATION_MESSAGE_LIMIT,
             remainingMessages: remainingMessages(reservation.messageCount),
@@ -149,7 +201,7 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
           message: toMessageView(stored),
           ticketLookup: result.ticketLookup,
           ticketDraft: ticketDraft && stored.draftId ? toDraftView(ticketDraft, stored.draftId, at) : null,
-          quickReplies: !discarded && quickReplies.success ? quickReplies.data : null,
+          quickReplies: !discarded && !handoff && !handoffFailed && quickReplies.success ? quickReplies.data : null,
         };
       } catch (error) {
         await abort(reservation);
@@ -163,9 +215,11 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
       const draft = await conversations.readDraft(actor.id, draftId);
       if (draft.kind !== request.kind) throw new DraftKindMismatchError();
       if (draft.kind === "CREATE") await tickets.ensureAvailable();
-      else if (!(await tickets.findOpenTicketByCode(actor.id, draft.ticketCode, now()))) throw new TicketNotOpenError();
-      const { message, ticket } = await conversations.confirmDraft(actor.id, draftId, request, now());
-      return { message: toMessageView(message), ticket };
+      else if (draft.kind === "REOPEN") {
+        if (!(await tickets.findResolvedTicketByCode(actor.id, draft.ticketCode, now()))?.canReopen) throw new TicketNotReopenableError();
+      } else if (!(await tickets.findOpenTicketByCode(actor.id, draft.ticketCode, now()))) throw new TicketNotOpenError();
+      const { message, ticket, conversation } = await conversations.confirmDraft(actor.id, draftId, request, now());
+      return { message: toMessageView(message), ticket, conversation };
     },
 
     async cancelDraft(actor, draftId) {

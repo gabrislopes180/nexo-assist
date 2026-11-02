@@ -54,6 +54,12 @@ export const TICKET_CATEGORY_LABEL: Record<TicketCategory, string> = {
   OTHER: "Outros",
 };
 
+export const AFFECTED_SCOPE_LABEL: Record<AffectedScope, string> = {
+  INDIVIDUAL: "Só a pessoa",
+  TEAM: "Equipe",
+  COMPANY: "Empresa",
+};
+
 export const TICKET_PRIORITY_LABEL: Record<TicketPriority, string> = {
   CRITICAL: "Crítica",
   HIGH: "Alta",

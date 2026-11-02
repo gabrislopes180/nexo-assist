@@ -26,7 +26,33 @@ const create = {
   dueAtPreview: "2026-10-20T16:43:00.000Z",
 };
 
+const reopen = {
+  id: "d3",
+  kind: "REOPEN",
+  ticket: { ...ticket, code: "INC-20150", status: "RESOLVED", canReopen: true },
+  reason: "A senha do SAP voltou a expirar.",
+  dueAtPreview: "2026-10-20T16:43:00.000Z",
+};
+
 describe("ticketDraftSchema", () => {
+  it("aceita o rascunho de reabertura de chamado resolvido", () => {
+    expect(ticketDraftSchema.parse(reopen)).toMatchObject({
+      kind: "REOPEN",
+      reason: "A senha do SAP voltou a expirar.",
+      ticket: { status: "RESOLVED", canReopen: true },
+    });
+  });
+
+  it("recusa reabertura sem motivo ou com status desconhecido", () => {
+    expect(ticketDraftSchema.safeParse({ ...reopen, reason: "" }).success).toBe(false);
+    expect(
+      ticketDraftSchema.safeParse({
+        ...reopen,
+        ticket: { ...reopen.ticket, status: "ARCHIVED" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("aceita o rascunho de criação, com detalhe de afetados opcional", () => {
     expect(ticketDraftSchema.parse(create).kind).toBe("CREATE");
     expect(

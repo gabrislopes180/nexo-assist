@@ -1,12 +1,30 @@
-import { Prisma } from "../generated/prisma/client.js";
+import { Prisma, type ConversationStatus } from "../generated/prisma/client.js";
 import type { ConfirmDraftRequest, TicketSummary } from "../shared/chat.js";
-import { confirmableDraftSchema, type ComplementDraft, type ConfirmableDraft, type CreateDraft } from "../shared/conversation-draft.js";
+import {
+  confirmableDraftSchema,
+  type ComplementDraft,
+  type ConfirmableDraft,
+  type CreateDraft,
+  type ReopenDraft,
+} from "../shared/conversation-draft.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { formatLocalDateTime } from "../tickets/sla.js";
 import { toTicketSummary } from "../tickets/ticket-matching.js";
-import { applyTicketEvent, capPriority, initialTimeline, OPEN_STATUSES, TICKET_PRIORITY_LABEL, TICKET_STATUS_LABEL } from "../tickets/ticket-rules.js";
+import {
+  AFFECTED_SCOPE_LABEL,
+  applyTicketEvent,
+  canReopen,
+  capPriority,
+  initialTimeline,
+  InvalidTicketTransitionError,
+  OPEN_STATUSES,
+  TICKET_CATEGORY_LABEL,
+  TICKET_PRIORITY_LABEL,
+  TICKET_STATUS_LABEL,
+} from "../tickets/ticket-rules.js";
 import { isOpenTicket, matchableTicketSelect } from "../tickets/ticket-service.js";
 import { ConversationNotWithAgentError } from "./conversation-rules.js";
+import { transferToAnalyst } from "./handoff.js";
 
 /** Inexistente, já usado ou de outro dono: a mesma resposta, para não revelar qual dos casos é. */
 export class DraftNotFoundError extends Error {
@@ -23,6 +41,14 @@ export class DraftKindMismatchError extends Error {
   }
 }
 
+/** Janela de 7 dias vencida, chamado já reaberto ou não mais resolvido. */
+export class TicketNotReopenableError extends Error {
+  constructor() {
+    super("Chamado não pode ser reaberto");
+    this.name = "TicketNotReopenableError";
+  }
+}
+
 export class TicketNotOpenError extends Error {
   constructor() {
     super("Chamado não está aberto");
@@ -32,7 +58,11 @@ export class TicketNotOpenError extends Error {
 
 export type StoredAgentMessage = { id: string; content: string; trace: AgentTrace; createdAt: Date };
 
-export type ConfirmedDraft = { message: StoredAgentMessage; ticket: TicketSummary };
+export type ConfirmedDraft = {
+  message: StoredAgentMessage;
+  ticket: TicketSummary;
+  conversation: { id: string; status: ConversationStatus };
+};
 
 type DraftTransaction = Prisma.TransactionClient;
 
@@ -102,7 +132,7 @@ async function addComplement({ tx, ownerId, conversationId, now }: TurnScope, co
   return toTicketSummary(ticket, now);
 }
 
-async function confirmComplement(scope: TurnScope, draft: ComplementDraft, content: string): Promise<ConfirmedDraft> {
+async function confirmComplement(scope: TurnScope, draft: ComplementDraft, content: string): Promise<Omit<ConfirmedDraft, "conversation">> {
   const code = draft.ticketCode;
   const ticket = await addComplement(scope, code, content);
   const message = await writeAgentMessage(
@@ -166,11 +196,20 @@ async function createTicket({ tx, ownerId, conversationId, now }: TurnScope, dra
 
 function priorityNotice(draft: CreateDraft, priority: CreateDraft["priority"]): string {
   if (priority !== draft.priority) return ` A prioridade ficou ${TICKET_PRIORITY_LABEL[priority]} porque o problema afeta só você.`;
-  return priority === "CRITICAL" ? ` A prioridade ficou ${TICKET_PRIORITY_LABEL[priority]}, com prazo de 1 hora.` : "";
+  return priority === "CRITICAL"
+    ? ` A prioridade ficou ${TICKET_PRIORITY_LABEL[priority]}, com prazo de 1 hora. Um analista foi acionado e vai continuar a conversa por aqui.`
+    : "";
+}
+
+/** Resumo determinístico para a fila dos analistas; nada aqui vem da LLM. */
+function criticalSummary(ticket: { code: string; title: string; category: CreateDraft["category"] }, request: CreateRequest): string {
+  const affected = AFFECTED_SCOPE_LABEL[request.affectedScope] + (request.affectedDescription ? ` (${request.affectedDescription})` : "");
+  return `${ticket.code} · ${ticket.title} · Categoria: ${TICKET_CATEGORY_LABEL[ticket.category]} · Afetados: ${affected}`;
 }
 
 async function confirmCreation(scope: TurnScope, draft: CreateDraft, request: CreateRequest): Promise<ConfirmedDraft> {
   const ticket = await createTicket(scope, draft, request);
+  const critical = ticket.priority === "CRITICAL";
   const message = await writeAgentMessage(
     scope.tx,
     scope.conversationId,
@@ -183,6 +222,85 @@ async function confirmCreation(scope: TurnScope, draft: CreateDraft, request: Cr
         {
           tool: "createTicket",
           summary: `Abriu o ${ticket.code} com prioridade ${TICKET_PRIORITY_LABEL[ticket.priority]}.`,
+          status: "SUCCESS",
+        },
+        ...(critical
+          ? [{ tool: "transferToAnalyst", summary: "Transferiu a conversa para um analista (motivo: crítico).", status: "SUCCESS" } as const]
+          : []),
+      ],
+      confidence: "HIGH",
+      reason: critical ? "Confirmação do rascunho; chamado crítico vai direto para um analista." : "Confirmação explícita do rascunho pendente.",
+    },
+    scope.now,
+  );
+  if (critical) {
+    await transferToAnalyst(scope.tx, { conversationId: scope.conversationId, reason: "CRITICAL", summary: criticalSummary(ticket, request), at: scope.now });
+  }
+  return {
+    message,
+    ticket: toTicketSummary(ticket, scope.now),
+    conversation: { id: scope.conversationId, status: critical ? "WAITING_ANALYST" : "WITH_AGENT" },
+  };
+}
+
+/** Prioridade original mantida; o novo prazo sai de `applyTicketEvent` (REOPENED). */
+async function reopenTicket({ tx, ownerId, conversationId, now }: TurnScope, code: string, reason: string) {
+  const ticket = await tx.ticket.findFirst({
+    where: { code, ownerId },
+    select: { ...matchableTicketSelect, id: true, slaStartedAt: true, resolvedAt: true, updatedAt: true },
+  });
+  if (!ticket) throw new TicketNotReopenableError();
+  // Um relógio só, o do evento: é com ele que o replay do seed decide a janela de 7 dias.
+  const at = new Date(Math.max(now.getTime(), ticket.updatedAt.getTime()));
+  if (!canReopen(ticket, at)) throw new TicketNotReopenableError();
+  let applied: ReturnType<typeof applyTicketEvent>;
+  try {
+    applied = applyTicketEvent(ticket, { type: "REOPENED", actorType: "EMPLOYEE", at }, at);
+  } catch (error) {
+    if (error instanceof InvalidTicketTransitionError) throw new TicketNotReopenableError();
+    throw error;
+  }
+  const { next, eventDueAt, fromStatus } = applied;
+
+  // Condicional: outra conversa pode ter reaberto o mesmo chamado.
+  const { count } = await tx.ticket.updateMany({
+    where: { id: ticket.id, ownerId, status: "RESOLVED" },
+    data: { status: next.status, resolvedAt: null, slaStartedAt: next.slaStartedAt, dueAt: next.dueAt, updatedAt: next.updatedAt },
+  });
+  if (count === 0) throw new TicketNotReopenableError();
+  await tx.ticketEvent.create({
+    data: {
+      ticketId: ticket.id,
+      type: "REOPENED",
+      actorType: "EMPLOYEE",
+      actorId: ownerId,
+      content: reason,
+      fromStatus,
+      toStatus: next.status,
+      dueAt: eventDueAt,
+      conversationId,
+      createdAt: at,
+    },
+  });
+  const reopened = { ...ticket, status: next.status, dueAt: next.dueAt };
+  if (!isOpenTicket(reopened) || !reopened.dueAt) throw new Error("Chamado reaberto fora do estado esperado");
+  return { ...reopened, dueAt: reopened.dueAt };
+}
+
+async function confirmReopen(scope: TurnScope, draft: ReopenDraft, reason: string): Promise<Omit<ConfirmedDraft, "conversation">> {
+  const code = draft.ticketCode;
+  const ticket = await reopenTicket(scope, code, reason);
+  const message = await writeAgentMessage(
+    scope.tx,
+    scope.conversationId,
+    `Chamado ${code} reaberto. Status: ${TICKET_STATUS_LABEL[ticket.status]}. O novo prazo de atendimento é ${formatLocalDateTime(ticket.dueAt)}.`,
+    {
+      understood: `Confirmação da reabertura do chamado ${code}.`,
+      intent: "REOPEN",
+      actions: [
+        {
+          tool: "reopenTicket",
+          summary: `Reabriu o ${code} com prioridade ${TICKET_PRIORITY_LABEL[ticket.priority]}.`,
           status: "SUCCESS",
         },
       ],
@@ -200,8 +318,10 @@ export async function confirmPendingDraft(
 ): Promise<ConfirmedDraft> {
   const { conversationId, draft } = await claimDraft(tx, ownerId, draftId, now);
   const scope = { tx, ownerId, conversationId, now };
-  if (draft.kind === "COMPLEMENT" && request.kind === "COMPLEMENT") return confirmComplement(scope, draft, request.content);
+  const withAgent = { id: conversationId, status: "WITH_AGENT" } as const;
+  if (draft.kind === "COMPLEMENT" && request.kind === "COMPLEMENT") return { ...(await confirmComplement(scope, draft, request.content)), conversation: withAgent };
   if (draft.kind === "CREATE" && request.kind === "CREATE") return confirmCreation(scope, draft, request);
+  if (draft.kind === "REOPEN" && request.kind === "REOPEN") return { ...(await confirmReopen(scope, draft, request.reason)), conversation: withAgent };
   throw new DraftKindMismatchError();
 }
 
@@ -216,6 +336,18 @@ function cancellationOf(draft: ConfirmableDraft): { content: string; trace: Agen
         understood: `Cancelamento do complemento do chamado ${code}.`,
         intent: "COMPLEMENT",
         actions: [{ tool: "addTicketComplement", summary: `Rascunho descartado; nada foi gravado no chamado ${code}.`, status: "SKIPPED" }],
+      },
+    };
+  }
+  if (draft.kind === "REOPEN") {
+    const code = draft.ticketCode;
+    return {
+      content: `Tudo bem, não reabri o chamado ${code}. Nada foi alterado.`,
+      trace: {
+        ...shared,
+        understood: `Cancelamento da reabertura do chamado ${code}.`,
+        intent: "REOPEN",
+        actions: [{ tool: "reopenTicket", summary: `Rascunho descartado; o ${code} continua resolvido.`, status: "SKIPPED" }],
       },
     };
   }

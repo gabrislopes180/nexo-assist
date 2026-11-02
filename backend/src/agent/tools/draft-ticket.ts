@@ -42,13 +42,18 @@ const draftTicketOutputSchema = z.discriminatedUnion("outcome", [
 export type DraftTicketOutput = z.infer<typeof draftTicketOutputSchema>;
 
 type AffectedScope = NonNullable<DraftTicketInput["affectedScope"]>;
-type Scope = { affectedScope: AffectedScope; affectedDescription?: string };
+/** `cappedReason`: motivo mostrado quando o teto baixa a prioridade, fiel ao que o usuário disse. */
+type Scope = { affectedScope: AffectedScope; affectedDescription?: string; cappedReason?: string };
 
 const QUICK_REPLY_SCOPE: Readonly<Record<string, Scope>> = {
   "so eu": { affectedScope: "INDIVIDUAL" },
   "minha equipe": { affectedScope: "TEAM" },
   "toda a empresa": { affectedScope: "COMPANY" },
-  "nao sei": { affectedScope: "INDIVIDUAL", affectedDescription: "O funcionário não soube informar quem está sendo afetado." },
+  "nao sei": {
+    affectedScope: "INDIVIDUAL",
+    affectedDescription: "O funcionário não soube informar quem está sendo afetado.",
+    cappedReason: "não foi possível confirmar que afeta mais pessoas",
+  },
 };
 
 const CAPPED_PRIORITY_REASON = "afeta só você";
@@ -76,16 +81,27 @@ function unacknowledged(similar: readonly SimilarTicket[], acknowledged: readonl
   return similar.filter((ticket) => !valid.has(ticket.code.toUpperCase()));
 }
 
-function toProposal(input: DraftTicketInput, scope: Scope): DraftExecution {
+const MAX_DESCRIPTION = 2000;
+
+/** Garante a relação em código, sem repetir se o modelo já a escreveu e sem passar do limite. */
+function withRelation(description: string, relatedCode: string | null | undefined): string {
+  if (!relatedCode) return description;
+  const relation = `Relacionado ao ${relatedCode}.`;
+  if (description.includes(`Relacionado ao ${relatedCode}`)) return description;
+  const separator = "\n\n";
+  return `${description.slice(0, MAX_DESCRIPTION - relation.length - separator.length).trimEnd()}${separator}${relation}`;
+}
+
+function toProposal(input: DraftTicketInput, { cappedReason = CAPPED_PRIORITY_REASON, ...scope }: Scope, relatedCode: string | null | undefined): DraftExecution {
   const priority = capPriority(input.priority, scope.affectedScope);
   const parsed = proposedCreateDraftSchema.safeParse({
     kind: "CREATE",
     type: input.type,
     category: input.category,
     priority,
-    priorityReason: priority === input.priority ? input.priorityReason : CAPPED_PRIORITY_REASON,
+    priorityReason: priority === input.priority ? input.priorityReason : cappedReason,
     title: input.title,
-    description: input.description,
+    description: withRelation(input.description, relatedCode),
     ...scope,
   });
   // Proposta inválida que chegasse ao ChatService viraria 503 e desfaria o turno.
@@ -104,7 +120,7 @@ async function evaluate({ ticketService, now = () => new Date() }: ToolDeps, own
   const similar = unacknowledged(found, input.acknowledgedDuplicates, context?.get("shownCodes"));
   if (similar.length > 0) return { outcome: "POSSIBLE_DUPLICATE", similar };
   const scope = scopeOf(input, context?.get("message"));
-  return scope ? toProposal(input, scope) : { outcome: "NEEDS_AFFECTED_SCOPE" };
+  return scope ? toProposal(input, scope, context?.get("relatedCode")) : { outcome: "NEEDS_AFFECTED_SCOPE" };
 }
 
 /** Não grava nada: só registra a proposta no turno. A criação exige a confirmação pela rota própria. */

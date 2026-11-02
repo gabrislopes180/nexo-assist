@@ -63,6 +63,21 @@ describe("trailSteps", () => {
     ]);
   });
 
+  it("mapeia a reabertura", () => {
+    expect(trailSteps([action("draftReopen", "SUCCESS")]).map((s) => s.label)).toEqual([
+      "consultou seus chamados",
+      "montou o rascunho",
+    ]);
+    expect(trailSteps([action("draftReopen", "ERROR")])).toEqual([
+      { label: "não conseguiu montar o rascunho", failed: true },
+    ]);
+    expect(trailSteps([action("draftReopen", "SKIPPED")])).toEqual([]);
+    expect(trailSteps([action("reopenTicket", "SUCCESS")])).toEqual([
+      { label: "reabriu o chamado", failed: false },
+    ]);
+    expect(trailSteps([action("reopenTicket", "SKIPPED")])).toEqual([]);
+  });
+
   it("deduplica passos iguais do mesmo turno", () => {
     const steps = trailSteps([
       action("searchMyOpenTickets", "SUCCESS", "a"),

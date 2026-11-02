@@ -1,7 +1,17 @@
 import type { ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../../shared/chat.js";
 
-/** Execuções de `draftComplement` e `draftTicket`, na ordem em que aconteceram. */
+/** Por que `draftReopen` não propôs nada. `NOT_FOUND` cobre inexistente e alheio, sem distinguir. */
+export type ReopenBlock =
+  | { kind: "STILL_OPEN"; ticket: SimilarTicket }
+  | { kind: "WINDOW_EXPIRED"; ticket: SimilarTicket }
+  | { kind: "MULTIPLE"; tickets: SimilarTicket[] }
+  | { kind: "NEEDS_REASON"; ticket: SimilarTicket }
+  | { kind: "NOT_FOUND" }
+  | { kind: "UNAVAILABLE" };
+
+/** Execuções de `draftComplement`, `draftTicket` e `draftReopen`, na ordem em que aconteceram. */
 export type DraftExecution =
+  | { outcome: "REOPEN_BLOCKED"; block: ReopenBlock }
   | { outcome: "DRAFTED"; proposal: ProposedTicketDraft }
   /** Inexistente, resolvido ou de outro dono: o agent não pode distinguir. */
   | { outcome: "TICKET_NOT_AVAILABLE" }
@@ -44,5 +54,7 @@ export type TurnContextValues = {
   message: string;
   /** Códigos já citados pelo agent na conversa: só eles podem ser reconhecidos como parecidos. */
   shownCodes: readonly string[];
+  /** Código do aviso de reabertura fora da janela ainda em aberto: o chamado novo leva "Relacionado ao <código>". */
+  relatedCode: string | null;
   recorder: TurnRecorder;
 };

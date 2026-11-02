@@ -12,7 +12,7 @@ import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
-import { createTicketService, TicketServiceUnavailableError, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
+import { createTicketService, TicketServiceUnavailableError, type ResolvedTicketReader, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
@@ -83,7 +83,8 @@ describe("rotas de criação de chamado", () => {
     analystCookie = await cookieOf(analyst.id);
 
     const real = createTicketService(client);
-    const tickets: TicketCodeReader & TicketAvailability = {
+    const tickets: TicketCodeReader & ResolvedTicketReader & TicketAvailability = {
+      findResolvedTicketByCode: (...args) => real.findResolvedTicketByCode(...args),
       findOpenTicketByCode: (...args) => real.findOpenTicketByCode(...args),
       ensureAvailable: () => (ticketsDown ? Promise.reject(new TicketServiceUnavailableError()) : real.ensureAvailable()),
     };
@@ -154,7 +155,7 @@ describe("rotas de criação de chamado", () => {
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("cache-control"), "no-store");
       const confirmed = (await res.json()) as ConfirmDraftResponse;
-      assert.deepEqual(Object.keys(confirmed).sort(), ["message", "ticket"]);
+      assert.deepEqual(Object.keys(confirmed).sort(), ["conversation", "message", "ticket"]);
       assert.equal(confirmed.ticket.code, "REQ-41");
       assert.equal(confirmed.ticket.title, body.title);
       assert.equal(confirmed.ticket.type, "REQ");

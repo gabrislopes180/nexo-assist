@@ -7,7 +7,8 @@ import { isOpen, TICKET_PRIORITY_LABEL } from "../tickets/ticket-rules.js";
 import { DRAFT_COMPLEMENT_TOOL } from "./tools/draft-complement.js";
 import { AFFECTED_QUESTION, AFFECTED_QUICK_REPLIES, DRAFT_TICKET_TOOL } from "./tools/draft-ticket.js";
 import { SEARCH_MY_OPEN_TICKETS_TOOL } from "./tools/search-my-open-tickets.js";
-import type { DraftExecution } from "./tools/turn-recorder.js";
+import { DRAFT_REOPEN_TOOL } from "./tools/draft-reopen.js";
+import type { DraftExecution, ReopenBlock } from "./tools/turn-recorder.js";
 
 /** O que a LLM preenche. `trace.actions` e `ticketLookup` ficam de fora: saem das execuções reais. */
 export const llmDecisionSchema = z.object({
@@ -92,14 +93,39 @@ export function isBareConfirmation(message: string): boolean {
   return words.some((word) => CONFIRMATION_WORDS.has(word)) && words.every((word) => CONFIRMATION_WORDS.has(word) || CONFIRMATION_FILLERS.has(word));
 }
 
-const FALSE_ACTION =
-  /(?<!\p{L})(?:complementei|adicionei|acrescentei|incluí|registrei|atualizei|gravei|anotei|salvei|alterei|editei|preparei\s+o\s+(?:complemento|rascunho)|complemento\s+(?:já\s+)?(?:foi|está)\s+\p{L}+|criei|abri\s+(?:o|um|seu|novo)\s+(?:novo\s+)?chamado|chamado\s+(?:já\s+)?foi\s+criado(?!\s+em(?!\p{L}))|confirme|confirma(?!\p{L})[^.!?\n]*\?)(?!\p{L})/giu;
-const NEGATION = /(?<!\p{L})(?:não|nao|nunca|nem)(?!\p{L})/iu;
+const DONE = "(?:aberto|aberta|reaberto|reaberta|registrado|registrada|criado|criada|enviado|enviada|gravado|gravada|salvo|salva)";
+/**
+ * Dado do chamado, não ação do agent: "foi criado em 28/10", "aberto há 3 dias", "reaberto pela analista",
+ * "chamado reaberto INC-12 está em andamento".
+ */
+const NOT_A_DATE = "(?!\\s+(?:em|há|pel[oa]s?|ontem|hoje|no\\s+dia|está|que|(?:INC|REQ)-\\d+)(?![\\p{L}\\d]))";
+const FALSE_ACTION = new RegExp(
+  [
+    "complementei|adicionei|acrescentei|incluí|registrei|atualizei|gravei|anotei|salvei|alterei|editei|criei|enviei|encaminhei|reabri",
+    "preparei\\s+o\\s+(?:complemento|rascunho)",
+    "abri\\s+(?:o|um|seu|novo)\\s+(?:novo\\s+)?chamado",
+    "complemento\\s+(?:já\\s+)?(?:foi|está)\\s+\\p{L}+",
+    `(?:chamado|pedido)\\s+(?:já\\s+)?(?:foi|ficou)\\s+${DONE}${NOT_A_DATE}`,
+    `(?:chamado|pedido)\\s+(?:registrado|registrada|criado|criada|gravado|gravada|reaberto|reaberta)${NOT_A_DATE}`,
+    "(?:já\\s+)?está\\s+(?:registrado|registrada|gravado|gravada|salvo|salva)",
+    `(?:já\\s+)?foi\\s+(?:reaberto|reaberta)${NOT_A_DATE}`,
+    // Pedir confirmação por texto: a confirmação só existe no botão.
+    "confira\\s+e\\s+confirme",
+    "confirm(?:e|a)\\s+(?:o\\s+|a\\s+|esse\\s+|este\\s+|essa\\s+|esta\\s+)?(?:complemento|rascunho|abertura|criação|novo\\s+chamado)",
+    "confirma\\s*\\?",
+    "posso\\s+(?:criar|abrir|gravar|registrar|salvar)[^.!?\\n]*\\?",
+  ]
+    .map((pattern) => `(?:${pattern})`)
+    .join("|")
+    .replace(/^/, "(?<!\\p{L})(?:")
+    .concat(")(?!\\p{L})"),
+  "giu",
+);
+/** Negação colada à afirmação: "não atualizei", "ainda não o registrei". Uma negação distante não protege. */
+const NEGATION_BEFORE = /(?<!\p{L})(?:não|nao|nunca|nem)\s+(?:\p{L}+\s+)?$/iu;
 
-/** Só a oração da afirmação conta: "não atualizei o título, mas adicionei" ainda afirma uma ação. */
 function isNegated(text: string, index: number): boolean {
-  const clause = text.slice(0, index).split(/[.!?;:,\n]/).at(-1) ?? "";
-  return NEGATION.test(clause);
+  return NEGATION_BEFORE.test(text.slice(0, index));
 }
 
 /** O agent nunca grava; sem proposta no turno, não pode dizer que agiu nem pedir confirmação. */
@@ -135,12 +161,27 @@ const ACTION_SUMMARY: Record<TicketLookupResult["outcome"], string> = {
   UNAVAILABLE: "Serviço de chamados indisponível.",
 };
 
+const REOPEN_BLOCK_SUMMARY: Record<ReopenBlock["kind"], string> = {
+  STILL_OPEN: "Chamado ainda aberto; nenhum rascunho de reabertura criado.",
+  WINDOW_EXPIRED: "Chamado resolvido há mais de 7 dias; nenhum rascunho de reabertura criado.",
+  MULTIPLE: "Mais de um chamado reabrível; nenhum rascunho criado.",
+  NEEDS_REASON: "Falta o que voltou a falhar; nenhum rascunho criado.",
+  NOT_FOUND: "Nenhum chamado reabrível encontrado; nenhum rascunho criado.",
+  UNAVAILABLE: "Serviço de chamados indisponível; nenhum rascunho criado.",
+};
+
 function draftAction(execution: DraftExecution): AgentAction {
   switch (execution.outcome) {
     case "DRAFTED":
-      return execution.proposal.kind === "CREATE"
-        ? { tool: DRAFT_TICKET_TOOL, summary: "Rascunho de chamado preparado; nada foi criado.", status: "SUCCESS" }
-        : { tool: DRAFT_COMPLEMENT_TOOL, summary: "Rascunho de complemento preparado; nada foi gravado.", status: "SUCCESS" };
+      if (execution.proposal.kind === "CREATE") return { tool: DRAFT_TICKET_TOOL, summary: "Rascunho de chamado preparado; nada foi criado.", status: "SUCCESS" };
+      if (execution.proposal.kind === "REOPEN") return { tool: DRAFT_REOPEN_TOOL, summary: "Rascunho de reabertura preparado; nada foi reaberto.", status: "SUCCESS" };
+      return { tool: DRAFT_COMPLEMENT_TOOL, summary: "Rascunho de complemento preparado; nada foi gravado.", status: "SUCCESS" };
+    case "REOPEN_BLOCKED":
+      return {
+        tool: DRAFT_REOPEN_TOOL,
+        summary: REOPEN_BLOCK_SUMMARY[execution.block.kind],
+        status: execution.block.kind === "UNAVAILABLE" ? "ERROR" : "SKIPPED",
+      };
     case "TICKET_NOT_AVAILABLE":
       return { tool: DRAFT_COMPLEMENT_TOOL, summary: "Chamado indisponível para complemento; nenhum rascunho criado.", status: "SKIPPED" };
     case "SERVICE_UNAVAILABLE":
@@ -190,7 +231,7 @@ const FALSE_ACTION_REPLY =
   "Nada foi alterado nem criado. Para abrir um chamado, conte o que aconteceu; para complementar, diga o código e o que quer acrescentar. A confirmação é feita pelo botão na tela.";
 const DRAFT_FAILURE: Record<"TICKET_NOT_AVAILABLE" | "SERVICE_UNAVAILABLE", { content: string; reason: string }> = {
   TICKET_NOT_AVAILABLE: {
-    content: "Não consegui preparar o complemento: esse chamado não está entre os seus chamados abertos. Reabrir chamado ainda não é possível por aqui.",
+    content: "Não consegui preparar o complemento: esse chamado não está entre os seus chamados abertos. Se o problema voltou num chamado encerrado, me diga o código que eu vejo se dá para reabrir.",
     reason: "Chamado indisponível para complemento; resposta padrão usada.",
   },
   SERVICE_UNAVAILABLE: {
@@ -213,15 +254,15 @@ function rejectionOf(draft: string, lookup: TicketLookupResult | null): Rejectio
   return null;
 }
 
-function lastProposal(drafts: readonly DraftExecution[]): ProposedTicketDraft | null {
-  return drafts.flatMap((execution) => (execution.outcome === "DRAFTED" ? [execution.proposal] : [])).at(-1) ?? null;
-}
+/** Motivo longo tende a trazer fato novo; curto e sem citação ou falsa ação, vai na tela. */
+const MAX_SHOWN_REASON = 120;
 
 function proposalText(proposal: ProposedTicketDraft): string {
   if (proposal.kind === "COMPLEMENT") return `Preparei o complemento do ${proposal.ticket.code}. Confira e confirme.`;
+  if (proposal.kind === "REOPEN") return `Preparei a reabertura do ${proposal.ticket.code}. Confira e confirme.`;
   const label = TICKET_PRIORITY_LABEL[proposal.priority];
   const reason = proposal.priorityReason.trim().replace(/[.!\s]+$/, "");
-  const safe = reason !== "" && citesOnlyKnownTickets(reason, null) && !claimsFalseAction(reason);
+  const safe = reason !== "" && reason.length <= MAX_SHOWN_REASON && citesOnlyKnownTickets(reason, null) && !claimsFalseAction(reason);
   return safe ? `Coloquei prioridade ${label}: ${reason}. Confira antes de eu criar:` : `Coloquei prioridade ${label}. Confira antes de eu criar:`;
 }
 
@@ -229,17 +270,74 @@ function similarLine({ code, title, statusLabel }: SimilarTicket): string {
   return `${code} (${title}, ${statusLabel})`;
 }
 
+/** Os avisos de parecido sempre têm esta palavra: o runner usa isso para saber quais códigos foram mostrados como parecidos. */
+export const DUPLICATE_NOTICE_MARKER = "parecido";
+
+export function codesShownAsDuplicates(agentMessages: readonly string[]): string[] {
+  return agentMessages.filter((content) => content.includes(`chamado aberto ${DUPLICATE_NOTICE_MARKER}:`) || content.includes(`chamado ${DUPLICATE_NOTICE_MARKER} já resolvido:`)).flatMap(ticketCodesIn);
+}
+
 function duplicateText(similar: readonly SimilarTicket[]): string {
   const open = similar.filter(isOpen);
   const closed = similar.filter((ticket) => !isOpen(ticket));
-  const closedText = closed.length > 0 ? `Encontrei chamado parecido já resolvido: ${closed.map(similarLine).join(", ")}. Reabrir ainda não é possível por aqui.` : "";
-  if (open.length === 0) return `${closedText} Quer abrir um novo chamado?`;
-  const openText = `Já existe chamado aberto parecido: ${open.map(similarLine).join(", ")}.`;
-  return [openText, closedText, "Quer complementar esse chamado ou abrir um novo?"].filter(Boolean).join(" ");
+  // `findSimilarTickets` só devolve resolvidos ainda dentro da janela de reabertura.
+  const closedText = closed.length > 0 ? `Encontrei chamado ${DUPLICATE_NOTICE_MARKER} já resolvido: ${closed.map(similarLine).join(", ")}.` : "";
+  const options = [open.length > 0 ? "complementar o aberto" : "", closed.length > 0 ? "reabrir o resolvido" : "", "abrir um novo"].filter(Boolean);
+  const question = `Quer ${options.slice(0, -1).join(", ")} ou ${options.at(-1) ?? "abrir um novo"}?`;
+  const openText = open.length > 0 ? `Já existe chamado aberto ${DUPLICATE_NOTICE_MARKER}: ${open.map(similarLine).join(", ")}.` : "";
+  return [openText, closedText, question].filter(Boolean).join(" ");
 }
 
-/** Bloqueios do `draftTicket`: a resposta vem do código, com os dados do serviço. */
-function createBlock(execution: DraftExecution | undefined): { content: string; reason: string; quickReplies: string[] | null } | null {
+export function windowExpiredText(code: string): string {
+  return `O ${code} foi resolvido há mais de 7 dias e não pode mais ser reaberto. Quer que eu prepare um chamado novo relacionado a ele?`;
+}
+
+const WINDOW_EXPIRED_NOTICE = /^O ((?:INC|REQ)-\d+) foi resolvido há mais de 7 dias e não pode mais ser reaberto\./;
+const CREATE_PROPOSAL_NOTICE = "Confira antes de eu criar:";
+
+/**
+ * Código do último aviso de reabertura fora da janela, se nenhuma proposta de criação veio depois.
+ * A relação é garantida em código: o chamado novo leva "Relacionado ao <código>" mesmo se o modelo esquecer.
+ */
+export function relatedCodeFrom(agentMessages: readonly string[]): string | null {
+  let related: string | null = null;
+  for (const content of agentMessages) {
+    const expired = WINDOW_EXPIRED_NOTICE.exec(content);
+    // Só as etapas da própria abertura mantêm a relação; qualquer outra resposta encerra o assunto.
+    const isCreationStep = content === AFFECTED_QUESTION || codesShownAsDuplicates([content]).length > 0;
+    if (expired?.[1]) related = expired[1];
+    else if (!isCreationStep || content.includes(CREATE_PROPOSAL_NOTICE)) related = null;
+  }
+  return related;
+}
+
+function reopenBlockText(block: ReopenBlock): string {
+  switch (block.kind) {
+    case "STILL_OPEN":
+      return `O ${block.ticket.code} ainda está aberto (${block.ticket.statusLabel}), então não precisa reabrir. Quer complementar esse chamado com o que voltou a acontecer?`;
+    case "WINDOW_EXPIRED":
+      return windowExpiredText(block.ticket.code);
+    case "MULTIPLE":
+      return `Encontrei mais de um chamado resolvido que pode ser reaberto: ${block.tickets.map(({ code, title }) => `${code} (${title})`).join(", ")}. Qual deles voltou a dar problema?`;
+    case "NEEDS_REASON":
+      return `O que voltou a falhar no ${block.ticket.code}?`;
+    case "NOT_FOUND":
+      return "Não encontrei um chamado seu resolvido que possa ser reaberto com esses dados. Se quiser, conte o que está acontecendo e eu preparo um chamado novo.";
+    case "UNAVAILABLE":
+      return "Não consegui preparar a reabertura agora porque o serviço de chamados está indisponível. Tente novamente em instantes.";
+  }
+}
+
+/** Bloqueios de `draftTicket` e `draftReopen`: a resposta vem do código, com os dados do serviço. */
+function createBlock(execution: DraftExecution | undefined): { content: string; reason: string; quickReplies: string[] | null; intent: AgentTrace["intent"] } | null {
+  if (execution?.outcome === "REOPEN_BLOCKED") {
+    return { content: reopenBlockText(execution.block), reason: REOPEN_BLOCK_SUMMARY[execution.block.kind], quickReplies: null, intent: "REOPEN" };
+  }
+  const block = createTicketBlock(execution);
+  return block && { ...block, intent: "OPEN_TICKET" };
+}
+
+function createTicketBlock(execution: DraftExecution | undefined): { content: string; reason: string; quickReplies: string[] | null } | null {
   switch (execution?.outcome) {
     case "NEEDS_AFFECTED_SCOPE":
       return { content: AFFECTED_QUESTION, reason: "Falta saber quem é afetado para preparar o rascunho.", quickReplies: AFFECTED_QUICK_REPLIES };
@@ -265,7 +363,8 @@ export function composeReply({ message, decision, fallbackText, executions, draf
       content: CONFIRMATION_REPLY,
       trace: {
         understood: "O usuário tentou confirmar por mensagem.",
-        intent: "COMPLEMENT",
+        // Pode ser complemento ou abertura: o turno não sabe qual rascunho está na tela.
+        intent: "OTHER",
         actions: actionsFrom(executions, drafts),
         confidence: "HIGH",
         reason: "Confirmação só vale pelo botão; resultados de tools do turno não foram usados.",
@@ -283,25 +382,24 @@ export function composeReply({ message, decision, fallbackText, executions, draf
   // Vale a última execução: um bloqueio depois de uma proposta a cancela.
   const block = outOfScope ? null : createBlock(drafts.at(-1));
   if (block) {
-    const blockTrace: AgentTrace = { ...trace, intent: "OPEN_TICKET", reason: block.reason };
+    const blockTrace: AgentTrace = { ...trace, intent: block.intent, reason: block.reason };
     return { content: block.content, trace: blockTrace, ticketLookup, ticketDraft: null, quickReplies: block.quickReplies };
   }
 
   // A proposta é real: o texto vem do código, para nunca prometer mais do que ela.
-  const proposal = outOfScope ? null : lastProposal(drafts);
-  if (proposal) {
-    const intent = proposal.kind === "CREATE" ? "OPEN_TICKET" : "COMPLEMENT";
+  const lastDraft = outOfScope ? undefined : drafts.at(-1);
+  if (lastDraft?.outcome === "DRAFTED") {
+    const { proposal } = lastDraft;
+    const intent = proposal.kind === "CREATE" ? "OPEN_TICKET" : proposal.kind === "REOPEN" ? "REOPEN" : "COMPLEMENT";
     return { content: proposalText(proposal), trace: { ...trace, intent }, ticketLookup, ticketDraft: proposal };
+  }
+  if (lastDraft?.outcome === "TICKET_NOT_AVAILABLE" || lastDraft?.outcome === "SERVICE_UNAVAILABLE") {
+    const { content, reason } = DRAFT_FAILURE[lastDraft.outcome];
+    return { content, trace: { ...trace, confidence: "LOW", reason }, ticketLookup, ticketDraft: null };
   }
 
   const raw = decision ? decision.content.trim() : fallbackText.trim();
   if (raw === "") return null;
-
-  const failedDraft = outOfScope ? undefined : drafts.at(-1);
-  if (failedDraft?.outcome === "TICKET_NOT_AVAILABLE" || failedDraft?.outcome === "SERVICE_UNAVAILABLE") {
-    const { content, reason } = DRAFT_FAILURE[failedDraft.outcome];
-    return { content, trace: { ...trace, confidence: "LOW", reason }, ticketLookup, ticketDraft: null };
-  }
 
   const draft = decision ? raw : usablePlainText(raw);
   if (draft === "") {

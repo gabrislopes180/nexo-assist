@@ -1,0 +1,2 @@
+- [Console do analista: decisoes](project_analyst_console_decisions.md) — rota, camada de mock, contrato proposto e omissoes da tela 04
+- [Divergencias do prototipo](project_prototype_inconsistencies.md) — tela vs reference/tokens no console e qual venceu

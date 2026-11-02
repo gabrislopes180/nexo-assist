@@ -167,6 +167,17 @@ Sem `conversationId` cria uma conversa; com ele, continua. `message` tem de 1 a 
 
 O envelope traz também `quickReplies`: atalhos de resposta, ou `null`.
 
+### Transferência para analista
+
+A conversa vai para a fila dos analistas (`status: WAITING_ANALYST`) em dois casos:
+
+- **O agent decide transferir:** pedido do funcionário, chamado vencido aceito pela pessoa, ou baixa confiança. A transferência acontece junto com a resposta do agent.
+- **Confirmação de chamado com prioridade final `CRITICAL`:** a transferência é automática, com um resumo montado pelo backend.
+
+Em qualquer caso, o rascunho pendente é descartado e a conversa ganha a mensagem `SYSTEM` "Transferida para um analista". O `conversation.status` de `POST /chat` e da confirmação reflete o estado depois da operação. A mensagem `SYSTEM` não vem nessas respostas: quando `status` chega como `WAITING_ANALYST`, o frontend mostra o aviso e trava o composer; o histórico salvo já a contém.
+
+Enquanto a conversa está com analista (`WAITING_ANALYST` ou `WITH_ANALYST`), `POST /chat` responde `409 CONVERSATION_NOT_WITH_AGENT`. As mensagens do funcionário durante a espera ficam para a etapa do console.
+
 ### Rascunhos: complementar e abrir chamado
 
 O agent nunca grava no chamado: ele propõe um rascunho, que chega em `ticketDraft` no envelope de `POST /chat`, ou `null` se o turno não propôs nenhum. Cada conversa guarda um rascunho: um novo substitui o anterior. Se o backend não conseguir validar um complemento, a proposta é descartada e a resposta passa a dizer isso.
@@ -175,10 +186,11 @@ O agent nunca grava no chamado: ele propõe um rascunho, que chega em `ticketDra
 |---|---|
 | `COMPLEMENT` | `ticket`, `content` |
 | `CREATE` | `type`, `category`, `priority`, `title`, `description`, `affectedScope`, `affectedDescription` (opcional), `dueAtPreview` |
+| `REOPEN` | `ticket` (com `status` e `canReopen`), `reason`, `dueAtPreview` |
 
 | Rota | Body | Resposta de sucesso |
 |---|---|---|
-| `POST /chat/drafts/:id/confirm` | Depende do `kind`, abaixo | `200` com `{ message, ticket }` |
+| `POST /chat/drafts/:id/confirm` | Depende do `kind`, abaixo | `200` com `{ message, ticket, conversation: { id, status } }` |
 | `POST /chat/drafts/:id/cancel` | vazio | `200` com `{ message }` |
 
 ```json
@@ -189,7 +201,12 @@ O agent nunca grava no chamado: ele propõe um rascunho, que chega em `ticketDra
 { "kind": "CREATE", "title": "até 120", "description": "até 2000", "affectedScope": "INDIVIDUAL | TEAM | COMPANY", "affectedDescription": "opcional" }
 ```
 
+```json
+{ "kind": "REOPEN", "reason": "texto de 1 a 2000 caracteres" }
+```
+
 - **Complemento:** o `content` confirmado é o que vale, então a pessoa pode ajustar o texto. Ele vira um comentário no histórico do chamado e não altera a descrição original, o status nem o prazo.
+- **Reabertura:** só chamado resolvido há até 7 dias. O `reason` confirmado é o que vale e fica no histórico do chamado. A prioridade original é mantida, e o prazo recomeça da hora da confirmação.
 - **Abertura:** só título, descrição e afetados são editáveis. Tipo, categoria e prioridade ficam como no rascunho, e o prazo real conta da hora da confirmação. A prioridade `CRITICAL` exige escopo `TEAM` ou `COMPANY`: com `INDIVIDUAL`, o chamado fica `HIGH`.
 
 As duas rotas exigem sessão de funcionário, não chamam o modelo e não contam no limite de 30 mensagens. Cancelar não consome número de chamado.
@@ -201,6 +218,7 @@ As duas rotas exigem sessão de funcionário, não chamam o modelo e não contam
 | `403` | `FORBIDDEN` | Usuário não é funcionário |
 | `404` | `DRAFT_NOT_FOUND` | Rascunho inexistente, já usado ou de outro dono |
 | `409` | `TICKET_NOT_OPEN` | Chamado resolvido; o rascunho é mantido |
+| `409` | `TICKET_NOT_REOPENABLE` | Reabertura fora da janela de 7 dias, ou chamado já reaberto; o rascunho é mantido |
 | `409` | `CONVERSATION_NOT_WITH_AGENT` | Conversa fora do agent; o rascunho é mantido |
 | `503` | `TICKET_SERVICE_UNAVAILABLE` | Só na confirmação; o rascunho é mantido e pode tentar de novo |
 | `500` | `INTERNAL_ERROR` | Erro inesperado; nada é gravado e o rascunho é mantido |

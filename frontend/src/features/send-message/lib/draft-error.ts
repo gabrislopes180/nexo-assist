@@ -43,6 +43,10 @@ export function getDraftFailure(error: unknown): DraftFailure {
       return failure("Este chamado não está mais aberto.", {
         unavailable: true,
       });
+    case "TICKET_NOT_REOPENABLE":
+      return failure("Este chamado não pode mais ser reaberto.", {
+        unavailable: true,
+      });
     case "CONVERSATION_NOT_WITH_AGENT":
       return failure("Não concluído", {
         lock: { message: "Esta conversa está com um analista." },

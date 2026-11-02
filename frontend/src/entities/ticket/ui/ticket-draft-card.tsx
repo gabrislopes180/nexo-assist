@@ -92,7 +92,14 @@ export function TicketDraftCard({
   };
 
   const header =
-    draft.kind === "CREATE"
+    draft.kind === "REOPEN"
+      ? {
+          kind: "Reabrir chamado",
+          number: draft.ticket.code,
+          title: draft.ticket.title,
+          description: values.kind === "REOPEN" ? values.reason : draft.reason,
+        }
+      : draft.kind === "CREATE"
       ? {
           kind: "Novo chamado",
           number: "Rascunho",

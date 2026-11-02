@@ -31,7 +31,12 @@ const TOOL_STEPS: Record<string, StepsByStatus> = {
     SKIPPED: failed("não encontrou o chamado"),
     ERROR: failed("não conseguiu verificar o chamado"),
   },
+  draftReopen: {
+    SUCCESS: done("consultou seus chamados", "montou o rascunho"),
+    ERROR: failed("não conseguiu montar o rascunho"),
+  },
   createTicket: { SUCCESS: done("criou o chamado") },
+  reopenTicket: { SUCCESS: done("reabriu o chamado") },
   addTicketComplement: { SUCCESS: done("registrou o complemento") },
 };
 

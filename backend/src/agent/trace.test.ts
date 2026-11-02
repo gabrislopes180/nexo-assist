@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { TicketLookupResult, TicketSummary } from "../shared/chat.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import type { DraftExecution } from "./tools/turn-recorder.js";
+import { relatedCodeFrom, windowExpiredText } from "./trace.js";
 import { actionsFrom, CONFIRMATION_REPLY, citesOnlyKnownTickets, claimsFalseAction, isBareConfirmation, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
 
 const ticket = (code: string, overrides: Partial<TicketSummary> = {}): TicketSummary => ({
@@ -101,6 +102,19 @@ describe("claimsFalseAction", () => {
       "Abri um chamado para você.",
       "Registrei o chamado.",
       "Seu chamado foi criado.",
+      "Seu chamado foi aberto.",
+      "Chamado registrado com sucesso.",
+      "Pronto, está registrado.",
+      "Encaminhei para a equipe.",
+      "Enviei o pedido ao suporte.",
+      "Não se preocupe que já criei o chamado.",
+      "Posso criar o chamado?",
+      "Confirma?",
+      "Reabri o chamado.",
+      "O chamado foi reaberto.",
+      "Chamado reaberto com sucesso.",
+      "Pronto, o INC-12 foi reaberto.",
+      "O INC-12 já foi reaberto",
     ]) {
       assert.equal(claimsFalseAction(text), true, text);
     }
@@ -118,9 +132,28 @@ describe("claimsFalseAction", () => {
   });
 
   it("não acusa orientação nem dado do chamado", () => {
-    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "O chamado foi criado em 28/10.", "Abri o notebook e nada.", "Quer abrir um chamado?", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
+    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "O chamado foi criado em 28/10.", "Seu chamado está aberto e aguardando analista.", "Confirme o código do chamado, por favor.", "Você confirma que o erro é 809?", "Não, eu não criei nada.", "Não o atualizei.", "O chamado foi reaberto em 30/10.", "Não reabri nada.", "Seu chamado foi aberto há 3 dias.", "O chamado foi reaberto pela analista ontem.", "Seu chamado reaberto INC-12 está em andamento.", "Abri o notebook e nada.", "Quer abrir um chamado?", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
       assert.equal(claimsFalseAction(text), false, text);
     }
+  });
+});
+
+describe("relatedCodeFrom", () => {
+  it("vale logo depois do aviso de fora da janela", () => {
+    assert.equal(relatedCodeFrom([windowExpiredText("INC-1")]), "INC-1");
+  });
+
+  it("sobrevive à pergunta de afetados e ao aviso de parecido", () => {
+    assert.equal(relatedCodeFrom([windowExpiredText("INC-1"), "Quem está sendo afetado?"]), "INC-1");
+    assert.equal(relatedCodeFrom([windowExpiredText("INC-1"), "Já existe chamado aberto parecido: INC-2 (x, y). Quer complementar o aberto ou abrir um novo?"]), "INC-1");
+  });
+
+  it("some quando a conversa seguiu para outra resposta", () => {
+    assert.equal(relatedCodeFrom([windowExpiredText("INC-1"), "Tudo bem.", "Quem está sendo afetado?"]), null);
+  });
+
+  it("some depois de uma proposta de criação", () => {
+    assert.equal(relatedCodeFrom([windowExpiredText("INC-1"), "Coloquei prioridade Média. Confira antes de eu criar:"]), null);
   });
 });
 
@@ -273,6 +306,10 @@ describe("composeReply", () => {
   describe("mensagem que é só confirmação", () => {
     const proposal = { kind: "COMPLEMENT" as const, ticket: ticket("INC-20311"), content: "Texto." };
 
+    it("não assume o tipo de rascunho na intenção", () => {
+      assert.equal(compose({ message: "Confirmo" })?.trace.intent, "OTHER");
+    });
+
     it("devolve o template, sem lookup, e mantém a tool real no trace", () => {
       const reply = compose({ message: "Confirmo", decision: { ...decision, content: "Veja seus chamados." }, executions: [multiple] });
       assert.equal(reply?.content, CONFIRMATION_REPLY);
@@ -325,6 +362,16 @@ describe("composeReply", () => {
       assert.equal(compose({ decision: null, fallbackText: "", drafts: [drafted] })?.ticketDraft, proposal);
     });
 
+    it("falha depois de proposta no mesmo turno: vale a falha", () => {
+      const reply = compose({ drafts: [drafted, notAvailable] });
+      assert.equal(reply?.ticketDraft, null);
+      assert.match(reply?.content ?? "", /não está entre os seus chamados abertos/);
+    });
+
+    it("falha de rascunho com texto vazio usa o template, não vira 503", () => {
+      assert.match(compose({ decision: null, fallbackText: "", drafts: [serviceDown] })?.content ?? "", /indisponível/);
+    });
+
     it("vale a última proposta aceita", () => {
       const other = { ...proposal, ticket: ticket("REQ-2") };
       const reply = compose({ drafts: [drafted, { outcome: "DRAFTED", proposal: other }] });
@@ -337,6 +384,8 @@ describe("composeReply", () => {
       assert.equal(reply?.ticketDraft, null);
       assert.match(reply?.content ?? "", /não está entre os seus chamados abertos/);
       assert.ok(!/juliana|resolvido|existe/i.test(reply?.content ?? ""));
+      assert.ok(!/ainda não é possível/.test(reply?.content ?? ""));
+      assert.match(reply?.content ?? "", /reabrir/);
       assert.equal(reply?.trace.actions[0]?.status, "SKIPPED");
       assert.equal(reply?.trace.confidence, "LOW");
     });

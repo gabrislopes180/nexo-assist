@@ -205,18 +205,21 @@ describe("criação de chamado por rascunho", () => {
     });
 
     describe("teto de prioridade", () => {
-      it("mantém CRITICAL com TEAM e avisa da prioridade", async () => {
-        const { draftId } = await conversationWithDraft(proposal({ priority: "CRITICAL" }));
-        const { ticket, message } = await confirm(draftId);
+      it("mantém CRITICAL com TEAM, avisa da prioridade e transfere a conversa", async () => {
+        const { conversationId, draftId } = await conversationWithDraft(proposal({ priority: "CRITICAL" }));
+        const { ticket, message, conversation } = await confirm(draftId);
         assert.equal(ticket.priority, "CRITICAL");
+        assert.deepEqual(conversation, { id: conversationId, status: "WAITING_ANALYST" });
+        assert.match(message.content, /analista/);
         assert.match(message.content, /Crítica/);
         assert.match(message.content, /1 hora/);
       });
 
       it("rebaixa para HIGH quando a edição deixa o escopo INDIVIDUAL, com prazo e aviso coerentes", async () => {
         const { draftId } = await conversationWithDraft(proposal({ priority: "CRITICAL" }));
-        const { ticket, message } = await confirm(draftId, request({ affectedScope: "INDIVIDUAL" }));
+        const { ticket, message, conversation } = await confirm(draftId, request({ affectedScope: "INDIVIDUAL" }));
         assert.equal(ticket.priority, "HIGH");
+        assert.equal(conversation.status, "WITH_AGENT");
         assert.equal(ticket.dueAt, computeDueAt("HIGH", T1).toISOString());
         assert.match(message.content, /Alta/);
       });

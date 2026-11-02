@@ -18,6 +18,7 @@ function scripted(...steps: Array<() => Promise<TicketLookupResult>>) {
   const service: FullTicketService = {
     findOpenTicketByCode: () => Promise.reject(new Error("não usado aqui")),
     findSimilarTickets: () => Promise.reject(new Error("não usado aqui")),
+    findResolvedTicketByCode: () => Promise.reject(new Error("não usado aqui")),
     ensureAvailable: () => Promise.reject(new Error("não usado aqui")),
     lookupOpenTickets(...args) {
       calls.push(args);
@@ -109,12 +110,23 @@ describe("findOpenTicketByCode resiliente", () => {
   });
 });
 
+describe("findSimilarTickets resiliente", () => {
+  it("repassa as opções de filtro", async () => {
+    const calls: unknown[][] = [];
+    const { service } = scripted();
+    const spy = { ...service, findSimilarTickets: (...args: unknown[]) => (calls.push(args), Promise.resolve([])) };
+    await createResilientTicketService(spy, FAST).findSimilarTickets("dono", ["a"], NOW, { only: "reopenable" });
+    assert.deepEqual(calls, [["dono", ["a"], NOW, { only: "reopenable" }]]);
+  });
+});
+
 describe("leituras novas resilientes", () => {
   it("findSimilarTickets e ensureAvailable viram erro tipado ao esgotar as tentativas", async () => {
     const { service } = scripted();
     const resilient = createResilientTicketService(service, FAST);
     await assert.rejects(resilient.findSimilarTickets("dono", ["a"], NOW), TicketServiceUnavailableError);
     await assert.rejects(resilient.ensureAvailable(), TicketServiceUnavailableError);
+    await assert.rejects(resilient.findResolvedTicketByCode("dono", "INC-1", NOW), TicketServiceUnavailableError);
   });
 
   it("com a simulação down ficam indisponíveis", async () => {
@@ -122,6 +134,7 @@ describe("leituras novas resilientes", () => {
     const simulated = createTicketServiceFromEnv(service, { TICKET_SERVICE_SIMULATION: "down" }, FAST);
     await assert.rejects(simulated.findSimilarTickets("dono", ["a"], NOW), TicketServiceUnavailableError);
     await assert.rejects(simulated.ensureAvailable(), TicketServiceUnavailableError);
+    await assert.rejects(simulated.findResolvedTicketByCode("dono", "INC-1", NOW), TicketServiceUnavailableError);
   });
 });
 

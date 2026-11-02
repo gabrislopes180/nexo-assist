@@ -45,6 +45,14 @@ describe("getDraftFailure", () => {
     });
   });
 
+  it("marca como indisponível quando o chamado não pode mais ser reaberto", () => {
+    expect(getDraftFailure(http("TICKET_NOT_REOPENABLE", 409))).toMatchObject({
+      line: "Este chamado não pode mais ser reaberto.",
+      retryable: false,
+      unavailable: true,
+    });
+  });
+
   it("bloqueia o chat quando a conversa passou a um analista", () => {
     expect(getDraftFailure(http("CONVERSATION_NOT_WITH_AGENT", 409))).toMatchObject({
       line: "Não concluído",

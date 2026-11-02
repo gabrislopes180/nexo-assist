@@ -1,5 +1,5 @@
 import type { HistoryMessage } from "../conversations/conversation-service.js";
-import type { ProposedTicketDraft, TicketLookupResult } from "../shared/chat.js";
+import type { HandoffProposal, ProposedTicketDraft, TicketLookupResult } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
 
 /** Fronteira entre o chat e o agent: a API não conhece o Mastra. */
@@ -19,6 +19,8 @@ export type AgentTurnResult = {
   ticketDraft?: ProposedTicketDraft | null;
   /** Atalhos de resposta mostrados com a mensagem. */
   quickReplies?: string[] | null;
+  /** Transferência para analista. Prevalece sobre o rascunho do mesmo turno; inválida é descartada. */
+  handoff?: HandoffProposal | null;
 };
 
 export type AgentRunner = {

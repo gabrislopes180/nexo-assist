@@ -26,9 +26,23 @@ export type TicketCodeReader = {
   findOpenTicketByCode(ownerId: string, code: string, now: Date): Promise<TicketSummary | null>;
 };
 
-/** Possíveis duplicados do dono: abertos e resolvidos ainda reabríveis, com escopo de dono. */
+/** `only: "reopenable"` deixa só resolvidos ainda reabríveis, filtrados antes do corte em 5. */
+export type SimilarTicketOptions = { only?: "reopenable" };
+
+/**
+ * Possíveis duplicados do dono: abertos e resolvidos ainda reabríveis, com escopo de dono.
+ * Sem opções, abertos parecidos podem ocupar as 5 vagas; para reabertura, use `only: "reopenable"`.
+ */
 export type SimilarTicketReader = {
-  findSimilarTickets(ownerId: string, keywords: readonly string[], now: Date): Promise<SimilarTicket[]>;
+  findSimilarTickets(ownerId: string, keywords: readonly string[], now: Date, options?: SimilarTicketOptions): Promise<SimilarTicket[]>;
+};
+
+/**
+ * Para reabertura. Null só para inexistente ou de outro dono. Chamado aberto volta com o status
+ * aberto e `canReopen: false`: é assim que quem chama distingue "ainda aberto" de "fora da janela".
+ */
+export type ResolvedTicketReader = {
+  findResolvedTicketByCode(ownerId: string, code: string, now: Date): Promise<{ ticket: SimilarTicket; canReopen: boolean } | null>;
 };
 
 /** Falha com TicketServiceUnavailableError quando o serviço não pode receber uma escrita. */
@@ -36,7 +50,7 @@ export type TicketAvailability = {
   ensureAvailable(): Promise<void>;
 };
 
-export type FullTicketService = TicketService & TicketCodeReader & SimilarTicketReader & TicketAvailability;
+export type FullTicketService = TicketService & TicketCodeReader & SimilarTicketReader & ResolvedTicketReader & TicketAvailability;
 
 export const matchableTicketSelect = {
   code: true,
@@ -50,6 +64,24 @@ export const matchableTicketSelect = {
   dueAt: true,
 } as const;
 
+type SimilarSource = MatchableTicket extends infer T ? Omit<T, "status"> & { status: TicketStatus; resolvedAt: Date | null } : never;
+
+function toSimilarTicket(ticket: SimilarSource, now: Date): SimilarTicket {
+  return {
+    code: ticket.code,
+    type: ticket.type,
+    category: ticket.category,
+    priority: ticket.priority,
+    status: ticket.status,
+    statusLabel: TICKET_STATUS_LABEL[ticket.status],
+    title: ticket.title,
+    createdAt: ticket.createdAt.toISOString(),
+    dueAt: ticket.dueAt?.toISOString() ?? null,
+    overdue: isOverdue(ticket, now),
+    canReopen: canReopen(ticket, now),
+  };
+}
+
 export function isOpenTicket<T extends { status: TicketStatus }>(ticket: T): ticket is T & { status: OpenTicketStatus } {
   return isOpen(ticket);
 }
@@ -60,25 +92,25 @@ export function createTicketService(client: Pick<PrismaClient, "ticket">): FullT
       await client.ticket.findFirst({ select: { id: true } });
     },
 
-    async findSimilarTickets(ownerId, keywords, now) {
+    async findSimilarTickets(ownerId, keywords, now, options = {}) {
       const rows = await client.ticket.findMany({ where: { ownerId }, select: { ...matchableTicketSelect, resolvedAt: true } });
-      const candidates = rows.filter((ticket) => isOpen(ticket) || canReopen(ticket, now));
+      const candidates = rows.filter((ticket) =>
+        options.only === "reopenable" ? canReopen(ticket, now) : isOpen(ticket) || canReopen(ticket, now),
+      );
       return [...similarTicketMatches(candidates, keywords)]
         .sort(byUrgency(now))
         .slice(0, MAX_LOOKUP_TICKETS)
-        .map((ticket) => ({
-          code: ticket.code,
-          type: ticket.type,
-          category: ticket.category,
-          priority: ticket.priority,
-          status: ticket.status,
-          statusLabel: TICKET_STATUS_LABEL[ticket.status],
-          title: ticket.title,
-          createdAt: ticket.createdAt.toISOString(),
-          dueAt: ticket.dueAt?.toISOString() ?? null,
-          overdue: isOverdue(ticket, now),
-          canReopen: canReopen(ticket, now),
-        }));
+        .map((ticket) => toSimilarTicket(ticket, now));
+    },
+
+    async findResolvedTicketByCode(ownerId, code, now) {
+      const ticket = await client.ticket.findFirst({
+        where: { ownerId, code: code.toUpperCase() },
+        select: { ...matchableTicketSelect, resolvedAt: true },
+      });
+      if (!ticket) return null;
+      const similar = toSimilarTicket(ticket, now);
+      return { ticket: similar, canReopen: similar.canReopen };
     },
 
 

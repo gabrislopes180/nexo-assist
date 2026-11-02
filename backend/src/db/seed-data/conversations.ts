@@ -1,10 +1,11 @@
 import type { ConversationStatus, HandoffReason, MessageAuthorType } from "../../generated/prisma/enums.js";
 import type { AgentTrace } from "../../shared/transparency.js";
 import { C2_HANDOFF_SUMMARY, C3_HANDOFF_SUMMARY } from "./tickets.js";
+import { HANDOFF_SYSTEM_MESSAGE } from "../../conversations/handoff.js";
 import { ago, formatLocalDateTime } from "./time.js";
 import type { UserKey } from "./users.js";
 
-export type ConversationKey = "C1" | "C2" | "C3" | "C4";
+export type ConversationKey = "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7";
 
 /** Com 29 mensagens do funcionário: a próxima é a última aceita, e a seguinte é recusada. */
 export const NEAR_LIMIT_CONVERSATION_ID = "seed-conv-near-limit";
@@ -167,7 +168,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           content: "Sim, pode abrir. Já testei outro navegador e outro computador, o erro é o mesmo.",
         },
         {
-          at: t({ minutes: 29 }),
+          at: t({ minutes: 29, seconds: 1 }),
           authorType: "AGENT",
           authorKey: null,
           content:
@@ -183,6 +184,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Chamados críticos são sempre transferidos para um analista.",
           },
         },
+        { at: t({ minutes: 29 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
       ],
     },
     {
@@ -240,7 +242,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           content: "Prefiro falar com um analista, preciso disso resolvido hoje.",
         },
         {
-          at: t({ hours: 2, minutes: 55 }),
+          at: t({ hours: 2, minutes: 55, seconds: 1 }),
           authorType: "AGENT",
           authorKey: null,
           content: "Transferi a conversa para um analista com um resumo do que já conversamos. Ele vai continuar por aqui.",
@@ -252,6 +254,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Pedido explícito para falar com uma pessoa.",
           },
         },
+        { at: t({ hours: 2, minutes: 55 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
         { at: t({ minutes: 40 }), authorType: "SYSTEM", authorKey: null, content: "Bruno assumiu a conversa" },
         {
           at: t({ minutes: 38 }),
@@ -267,6 +270,111 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
       ownerKey: "marina",
       status: "WITH_AGENT",
       messages: nearLimitMessages(t),
+    },
+    {
+      key: "C5",
+      id: "seed-conv-request",
+      ownerKey: "ana",
+      status: "WAITING_ANALYST",
+      handoffReason: "EMPLOYEE_REQUEST",
+      handoffSummary: "Ana não consegue acessar a pasta compartilhada do Financeiro e prefere falar com um analista.",
+      handoffAt: t({ minutes: 12 }),
+      messages: [
+        {
+          at: t({ minutes: 15 }),
+          authorType: "EMPLOYEE",
+          authorKey: "ana",
+          content: "Não consigo abrir a pasta compartilhada do Financeiro. Prefiro falar com alguém do suporte.",
+        },
+        {
+          at: t({ minutes: 12, seconds: 1 }),
+          authorType: "AGENT",
+          authorKey: null,
+          content: "Tudo bem, vou transferir a conversa para um analista com um resumo do que você contou.",
+          trace: {
+            understood: "A funcionária não acessa a pasta do Financeiro e pediu para falar com uma pessoa.",
+            intent: "TALK_TO_ANALYST",
+            actions: [{ tool: "transferToAnalyst", summary: "Transferiu a conversa (motivo: pedido do funcionário).", status: "SUCCESS" }],
+            confidence: "HIGH",
+            reason: "Pedido explícito para falar com uma pessoa.",
+          },
+        },
+        { at: t({ minutes: 12 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+      ],
+    },
+    {
+      key: "C6",
+      id: "seed-conv-low-confidence",
+      ownerKey: "juliana",
+      status: "WAITING_ANALYST",
+      handoffReason: "LOW_CONFIDENCE",
+      handoffSummary: "Juliana relata que o leitor de crachá da filial Campinas libera a entrada com atraso; não há artigo nem categoria clara.",
+      handoffAt: t({ minutes: 20 }),
+      messages: [
+        {
+          at: t({ minutes: 24 }),
+          authorType: "EMPLOYEE",
+          authorKey: "juliana",
+          content: "O leitor de crachá da entrada da filial está demorando uns 30 segundos para liberar a porta.",
+        },
+        {
+          at: t({ minutes: 20, seconds: 1 }),
+          authorType: "AGENT",
+          authorKey: null,
+          content: "Não tenho certeza de como tratar isso pela central de ajuda, então vou passar para um analista.",
+          trace: {
+            understood: "Leitor de crachá lento na entrada da filial Campinas.",
+            intent: "OTHER",
+            actions: [
+              { tool: "searchKnowledge", summary: "Buscou artigos sobre leitor de crachá; nenhum encontrado.", status: "SUCCESS" },
+              { tool: "transferToAnalyst", summary: "Transferiu a conversa (motivo: baixa confiança).", status: "SUCCESS" },
+            ],
+            confidence: "LOW",
+            reason: "Assunto fora da central de ajuda e sem categoria clara de chamado.",
+          },
+        },
+        { at: t({ minutes: 20 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+      ],
+    },
+    {
+      key: "C7",
+      id: "seed-conv-overdue",
+      ownerKey: "marina",
+      status: "WAITING_ANALYST",
+      handoffReason: "OVERDUE",
+      handoffSummary: "Marina perguntou pelo INC-20311 (notebook lento), que está com o prazo vencido, e aceitou falar com um analista.",
+      handoffAt: t({ minutes: 5 }),
+      messages: [
+        { at: t({ minutes: 9 }), authorType: "EMPLOYEE", authorKey: "marina", content: "Como está o chamado do meu notebook lento?" },
+        {
+          at: t({ minutes: 8 }),
+          authorType: "AGENT",
+          authorKey: null,
+          content: "O INC-20311 está aguardando analista e o prazo já venceu. Quer que eu transfira a conversa para um analista?",
+          trace: {
+            understood: "A funcionária quer saber do chamado do notebook lento.",
+            intent: "CHECK_TICKET",
+            actions: [{ tool: "searchMyOpenTickets", summary: "Encontrou o INC-20311, com prazo vencido.", status: "SUCCESS" }],
+            confidence: "HIGH",
+            reason: "Chamado único com o termo citado.",
+          },
+        },
+        { at: t({ minutes: 6 }), authorType: "EMPLOYEE", authorKey: "marina", content: "Sim, por favor." },
+        {
+          at: t({ minutes: 5, seconds: 1 }),
+          authorType: "AGENT",
+          authorKey: null,
+          content: "Transferi a conversa para um analista com um resumo do chamado.",
+          trace: {
+            understood: "A funcionária aceitou a transferência por causa do prazo vencido.",
+            intent: "TALK_TO_ANALYST",
+            actions: [{ tool: "transferToAnalyst", summary: "Transferiu a conversa (motivo: chamado vencido).", status: "SUCCESS" }],
+            confidence: "HIGH",
+            reason: "Aceite explícito da oferta de transferência.",
+          },
+        },
+        { at: t({ minutes: 5 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+      ],
     },
   ];
 }
