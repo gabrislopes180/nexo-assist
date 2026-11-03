@@ -8,6 +8,8 @@ export type AgentTurnInput = {
   actor: { id: string; name: string };
   history: HistoryMessage[];
   message: string;
+  /** Um analista já devolveu esta conversa: o agent só transfere por pedido explícito. */
+  returnedFromAnalyst: boolean;
 };
 
 export type AgentTurnResult = {

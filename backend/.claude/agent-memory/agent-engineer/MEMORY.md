@@ -1,0 +1,1 @@
+- [Conversa devolvida por analista](project_returned_from_analyst.md) — RETURNED_BY_ANALYST, normalizacao EMPLOYEE_REQUEST (todas conversas, exceto aceite de oferta), eval `returned`

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CONVERSATION_MESSAGE_LIMIT } from "../../conversations/conversation-rules.js";
+import { closeSystemMessage, RETURN_SYSTEM_MESSAGE, takeoverSystemMessage } from "../../conversations/attendance.js";
 import { HANDOFF_SYSTEM_MESSAGE } from "../../conversations/handoff.js";
 import { agentTraceSchema } from "../../shared/transparency.js";
 import { buildConversations, NEAR_LIMIT_CONVERSATION_ID } from "./conversations.js";
@@ -58,6 +59,59 @@ describe("conversas do seed", () => {
         if (previous) assert.ok(previous.at < message.at, `${conversation.key} #${index}`);
       });
     }
+  });
+
+  describe("atendimento por analista", () => {
+    const at = (conversation: ReturnType<typeof byId>, authorType: string, content: string) =>
+      conversation.messages.find((m) => m.authorType === authorType && m.content === content)?.at;
+
+    it("C3: assignedAt é a hora da SYSTEM de quem assumiu", () => {
+      const c3 = conversations.find((c) => c.key === "C3");
+      assert.ok(c3?.assignedAt);
+      assert.equal(c3.analystKey, "bruno");
+      assert.deepEqual(at(c3, "SYSTEM", takeoverSystemMessage("Bruno Martins")), c3.assignedAt);
+    });
+
+    it("seed-conv-returned: da Ana, de volta com o agent, sem transferência nem analista", () => {
+      const returned = byId("seed-conv-returned");
+      assert.equal(returned.key, "C8");
+      assert.equal(returned.ownerKey, "ana");
+      assert.equal(returned.status, "WITH_AGENT");
+      assert.equal(returned.analystKey, undefined);
+      assert.equal(returned.handoffAt ?? returned.handoffReason ?? returned.handoffSummary, undefined);
+      assert.ok(returned.returnedToAgentAt);
+      assert.deepEqual(at(returned, "SYSTEM", RETURN_SYSTEM_MESSAGE), returned.returnedToAgentAt);
+      assert.deepEqual(
+        returned.messages.map((m) => [m.authorType, m.authorKey]),
+        [
+          ["EMPLOYEE", "ana"],
+          ["AGENT", null],
+          ["SYSTEM", null],
+          ["SYSTEM", null],
+          ["ANALYST", "bruno"],
+          ["EMPLOYEE", "ana"],
+          ["SYSTEM", null],
+        ],
+      );
+      assert.ok(at(returned, "SYSTEM", HANDOFF_SYSTEM_MESSAGE));
+      assert.ok(at(returned, "SYSTEM", takeoverSystemMessage("Bruno Martins")));
+    });
+
+    it("seed-conv-closed-by-analyst: da Juliana, encerrada pelo Rafael há 3 h, mantendo a transferência", () => {
+      const closed = byId("seed-conv-closed-by-analyst");
+      assert.equal(closed.key, "C9");
+      assert.equal(closed.ownerKey, "juliana");
+      assert.equal(closed.status, "CLOSED");
+      assert.equal(closed.analystKey, "rafael");
+      assert.equal(closed.handoffReason, "EMPLOYEE_REQUEST");
+      assert.ok(closed.handoffSummary);
+      assert.deepEqual(closed.closedAt, new Date(NOW.getTime() - 3 * 60 * 60 * 1000));
+      assert.deepEqual(at(closed, "SYSTEM", closeSystemMessage("Rafael Lima")), closed.closedAt);
+      assert.deepEqual(at(closed, "SYSTEM", takeoverSystemMessage("Rafael Lima")), closed.assignedAt);
+      assert.deepEqual(at(closed, "SYSTEM", HANDOFF_SYSTEM_MESSAGE), closed.handoffAt);
+      assert.equal(closed.messages.at(-1)?.content, closeSystemMessage("Rafael Lima"));
+      assert.ok(closed.messages.some((m) => m.authorType === "ANALYST" && m.authorKey === "rafael"));
+    });
   });
 
   describe("conversa perto do limite", () => {

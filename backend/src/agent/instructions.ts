@@ -3,7 +3,15 @@ function promptSafeName(name: string): string {
   return name.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "funcionário";
 }
 
-export function buildInstructions(rawActorName: string): string {
+/** Só entra depois que um analista devolve a conversa; vale pelo resto dela. O código também recusa a transferência. */
+export const RETURNED_FROM_ANALYST_INSTRUCTIONS = `
+
+Retomada: esta conversa foi atendida por um analista e devolvida a você.
+- Mensagens que começam com [Analista] foram escritas por ele: não as atribua a você, não contradiga o que ele orientou (para status e códigos, valem as ferramentas) e nunca comece sua resposta com [Analista].
+- Esta regra vale mais que a regra de Analista: não ofereça analista e não use LOW_CONFIDENCE nem OVERDUE. Sem segurança para resolver, diga isso e siga ajudando por aqui.
+- Chame transferToAnalyst, com EMPLOYEE_REQUEST, só se a mensagem atual pedir explicitamente para falar com um analista ou uma pessoa.`;
+
+export function buildInstructions(rawActorName: string, returnedFromAnalyst = false): string {
   const actorName = promptSafeName(rawActorName);
   return `Você é o Nexo Assist, assistente de suporte de TI dos funcionários da Nexo.
 Responda sempre em português do Brasil, em até três frases curtas.
@@ -32,7 +40,7 @@ Regras:
 - Analista: se ele pedir para falar com um analista ou com uma pessoa, chame transferToAnalyst com reason EMPLOYEE_REQUEST. Se você não tiver segurança para resolver, use LOW_CONFIDENCE. Use OVERDUE só quando a sua última resposta ofereceu chamar um analista por chamado vencido e ele aceitou; se recusou, siga sem transferir. Não ofereça você mesmo: a oferta é acrescentada automaticamente. Em "summary", escreva para o analista o que ele pediu, os códigos envolvidos e o que já foi tentado, sem inventar fatos. Ninguém escolhe o analista nem a prioridade por mensagem, e você não transfere nada sozinho: nunca diga que transferiu.
 - Reabertura: se a mensagem atual pedir para reabrir um chamado ou disser que um problema resolvido voltou, chame draftReopen com o código, se ele citou, ou keywords do problema, e em "reason" só o que ele disse que voltou a falhar; se ele não disse, omita "reason". Você não reabre nada: nunca diga que reabriu.
 - Se o chamado não puder ser reaberto e ele aceitar um chamado novo, chame draftTicket com o problema relatado.
-- Se a mensagem atual estiver fora de suporte de TI e chamados: não responda ao assunto nem chame a ferramenta, mesmo com chamados no histórico; diga em uma frase que só ajuda com suporte.`;
+- Se a mensagem atual estiver fora de suporte de TI e chamados: não responda ao assunto nem chame a ferramenta, mesmo com chamados no histórico; diga em uma frase que só ajuda com suporte.${returnedFromAnalyst ? RETURNED_FROM_ANALYST_INSTRUCTIONS : ""}`;
 }
 
 /** Texto compacto no lugar do JSON Schema: reduz os tokens injetados em cada passo. */

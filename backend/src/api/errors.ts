@@ -2,6 +2,8 @@ import type { ErrorRequestHandler, RequestHandler, Response } from "express";
 import { EmailNotFoundError } from "../auth/auth-service.js";
 import { AgentUnavailableError } from "../chat/agent-runner.js";
 import { EmployeeOnlyError } from "../chat/chat-service.js";
+import { AnalystOnlyError } from "../console/console-service.js";
+import { ConversationNotAssignedError, ConversationNotWaitingError } from "../conversations/attendance.js";
 import {
   ConversationClosedError,
   ConversationMessageLimitReachedError,
@@ -9,6 +11,7 @@ import {
   ConversationNotWithAgentError,
 } from "../conversations/conversation-service.js";
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
+import { TooManyStreamsError } from "../realtime/sse.js";
 import { DraftKindMismatchError, DraftNotFoundError, TicketNotOpenError, TicketNotReopenableError } from "../conversations/ticket-draft.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import { TicketServiceUnavailableError } from "../tickets/ticket-service.js";
@@ -32,6 +35,19 @@ function sendError(res: Response, status: number, code: string, message: string)
 const DOMAIN_ERRORS = [
   { type: EmailNotFoundError, status: 401, code: "EMAIL_NOT_FOUND", message: "E-mail não encontrado." },
   { type: EmployeeOnlyError, status: 403, code: "FORBIDDEN", message: "Acesso não permitido." },
+  { type: AnalystOnlyError, status: 403, code: "FORBIDDEN", message: "Acesso não permitido." },
+  {
+    type: ConversationNotWaitingError,
+    status: 409,
+    code: "CONVERSATION_NOT_WAITING",
+    message: "Esta conversa não está mais esperando atendente.",
+  },
+  {
+    type: ConversationNotAssignedError,
+    status: 409,
+    code: "CONVERSATION_NOT_ASSIGNED",
+    message: "Esta conversa não está sendo atendida por você.",
+  },
   { type: ConversationNotFoundError, status: 404, code: "CONVERSATION_NOT_FOUND", message: "Conversa não encontrada." },
   {
     type: ConversationMessageLimitReachedError,
@@ -61,6 +77,7 @@ const DOMAIN_ERRORS = [
     code: "TICKET_SERVICE_UNAVAILABLE",
     message: "O serviço de chamados está indisponível no momento. Tente novamente em instantes.",
   },
+  { type: TooManyStreamsError, status: 429, code: "TOO_MANY_STREAMS", message: "Muitas conexões abertas. Feche outras abas e tente de novo." },
   {
     type: AgentUnavailableError,
     status: 503,

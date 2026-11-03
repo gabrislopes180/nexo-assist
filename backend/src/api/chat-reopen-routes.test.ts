@@ -3,10 +3,12 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../app.js";
+import { createEventBus } from "../realtime/event-bus.js";
 import { createAuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
 import type { AgentRunner, AgentTurnResult } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
+import { createConversationQueries } from "../conversations/conversation-queries.js";
 import { createConversationService } from "../conversations/conversation-service.js";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
@@ -15,6 +17,10 @@ import type { AgentTrace } from "../shared/transparency.js";
 import { computeDueAt } from "../tickets/sla.js";
 import { createTicketService, TicketServiceUnavailableError, type FullTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleService } from "./test-support.js";
+
+/** Turno com o agent: a resposta do agent está sempre presente. */
+type AgentChatResponse = ChatResponse & { message: NonNullable<ChatResponse["message"]> };
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -90,7 +96,7 @@ describe("rotas de reabertura", () => {
     respond = () => Promise.resolve({ content: "Confirma a reabertura?", trace: TRACE, ticketLookup: null, ticketDraft: draft, quickReplies: ["Sim"] });
     const res = await post("/chat", { message: "voltou o problema" });
     assert.equal(res.status, 200);
-    return (await res.json()) as ChatResponse;
+    return (await res.json()) as AgentChatResponse;
   }
 
   async function createDraft() {
@@ -125,8 +131,8 @@ describe("rotas de reabertura", () => {
         return respond();
       },
     };
-    const chatService = createChatService({ conversations: createConversationService(client), agentRunner, tickets });
-    server = createApp({ config, authService: createAuthService(client), chatService }).listen(0);
+    const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets });
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });

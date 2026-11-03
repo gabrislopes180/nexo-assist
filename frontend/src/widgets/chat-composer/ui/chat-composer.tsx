@@ -20,6 +20,8 @@ interface ChatComposerProps {
   max: number;
   busy: boolean;
   lock: ChatLock | null;
+  /** Aviso que não bloqueia (conversa com analista); ocupa o lugar do contador. */
+  notice: string | null;
   onNewConversation: () => void;
 }
 
@@ -29,6 +31,7 @@ export function ChatComposer({
   max,
   busy,
   lock,
+  notice,
   onNewConversation,
 }: ChatComposerProps) {
   const [text, setText] = useState("");
@@ -98,7 +101,9 @@ export function ChatComposer({
           placeholder={
             isLocked
               ? "Inicie uma nova conversa para continuar"
-              : "Escreva para o Nexo…"
+              : notice
+                ? "Escreva para o analista…"
+                : "Escreva para o Nexo…"
           }
           autoComplete="off"
           disabled={isLocked}
@@ -141,9 +146,16 @@ export function ChatComposer({
               Sua mensagem passou do limite de 2.000 caracteres.
             </p>
           ) : null}
-          <p className="ml-auto text-caption text-ink-3">
-            {count}/{max} mensagens nesta conversa
-          </p>
+          {notice ? (
+            // Com analista não há cota: o aviso fica no lugar do contador.
+            <p role="status" className="ml-auto text-small text-ink-2">
+              {notice}
+            </p>
+          ) : (
+            <p className="ml-auto text-caption text-ink-3">
+              {count}/{max} mensagens nesta conversa
+            </p>
+          )}
         </div>
       )}
     </form>

@@ -10,12 +10,16 @@ export interface ConsoleActionFailure {
 const FALLBACK = {
   takeover: "Não foi possível assumir o atendimento. Tente de novo.",
   return: "Não foi possível devolver ao agent. Tente de novo.",
+  reply: "Não foi possível enviar a resposta. Tente de novo.",
+  close: "Não foi possível encerrar o atendimento. Tente de novo.",
 } as const;
+
+export type ConsoleAction = keyof typeof FALLBACK;
 
 // O texto do backend nunca chega à tela.
 export function consoleActionFailure(
   error: unknown,
-  action: keyof typeof FALLBACK,
+  action: ConsoleAction,
 ): ConsoleActionFailure {
   const failure = (
     message: string,
@@ -35,6 +39,11 @@ export function consoleActionFailure(
   }
   if (error.code === "CONVERSATION_NOT_WAITING") {
     return failure("Esta conversa não está mais esperando atendente.", {
+      stale: true,
+    });
+  }
+  if (error.code === "CONVERSATION_NOT_ASSIGNED") {
+    return failure("Esta conversa não está sendo atendida por você.", {
       stale: true,
     });
   }

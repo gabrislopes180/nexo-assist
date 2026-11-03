@@ -56,7 +56,6 @@ describe("getChatFailure", () => {
       "Você chegou ao limite de 30 mensagens nesta conversa.",
     ],
     ["CONVERSATION_CLOSED", "Esta conversa foi encerrada."],
-    ["CONVERSATION_NOT_WITH_AGENT", "Um analista vai continuar o atendimento por aqui."],
   ])("bloqueia o chat em %s", (code, message) => {
     expect(getChatFailure(http(code, 409))).toEqual({
       line: NOT_SENT,
@@ -64,6 +63,17 @@ describe("getChatFailure", () => {
       lock: expect.objectContaining({ message }),
       clearConversation: false,
       sessionExpired: false,
+    });
+  });
+
+  it("conversa que passou a um analista: repetível, sem travar e pede ressincronização", () => {
+    expect(getChatFailure(http("CONVERSATION_NOT_WITH_AGENT", 409))).toEqual({
+      line: NOT_SENT,
+      retryable: true,
+      lock: null,
+      clearConversation: false,
+      sessionExpired: false,
+      resync: true,
     });
   });
 

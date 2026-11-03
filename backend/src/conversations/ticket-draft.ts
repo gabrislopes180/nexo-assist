@@ -25,6 +25,7 @@ import {
 import { isOpenTicket, matchableTicketSelect } from "../tickets/ticket-service.js";
 import { ConversationNotWithAgentError } from "./conversation-rules.js";
 import { transferToAnalyst } from "./handoff.js";
+import type { TimelineMessage } from "./timeline.js";
 
 /** Inexistente, já usado ou de outro dono: a mesma resposta, para não revelar qual dos casos é. */
 export class DraftNotFoundError extends Error {
@@ -62,6 +63,8 @@ export type ConfirmedDraft = {
   message: StoredAgentMessage;
   ticket: TicketSummary;
   conversation: { id: string; status: ConversationStatus };
+  /** A SYSTEM da transferência, quando o chamado é CRITICAL; senão vazio. */
+  systemMessages: TimelineMessage[];
 };
 
 type DraftTransaction = Prisma.TransactionClient;
@@ -132,7 +135,7 @@ async function addComplement({ tx, ownerId, conversationId, now }: TurnScope, co
   return toTicketSummary(ticket, now);
 }
 
-async function confirmComplement(scope: TurnScope, draft: ComplementDraft, content: string): Promise<Omit<ConfirmedDraft, "conversation">> {
+async function confirmComplement(scope: TurnScope, draft: ComplementDraft, content: string): Promise<Omit<ConfirmedDraft, "conversation" | "systemMessages">> {
   const code = draft.ticketCode;
   const ticket = await addComplement(scope, code, content);
   const message = await writeAgentMessage(
@@ -233,11 +236,12 @@ async function confirmCreation(scope: TurnScope, draft: CreateDraft, request: Cr
     },
     scope.now,
   );
-  if (critical) {
-    await transferToAnalyst(scope.tx, { conversationId: scope.conversationId, reason: "CRITICAL", summary: criticalSummary(ticket, request), at: scope.now });
-  }
+  const systemMessages = critical
+    ? [await transferToAnalyst(scope.tx, { conversationId: scope.conversationId, reason: "CRITICAL", summary: criticalSummary(ticket, request), at: scope.now })]
+    : [];
   return {
     message,
+    systemMessages,
     ticket: toTicketSummary(ticket, scope.now),
     conversation: { id: scope.conversationId, status: critical ? "WAITING_ANALYST" : "WITH_AGENT" },
   };
@@ -287,7 +291,7 @@ async function reopenTicket({ tx, ownerId, conversationId, now }: TurnScope, cod
   return { ...reopened, dueAt: reopened.dueAt };
 }
 
-async function confirmReopen(scope: TurnScope, draft: ReopenDraft, reason: string): Promise<Omit<ConfirmedDraft, "conversation">> {
+async function confirmReopen(scope: TurnScope, draft: ReopenDraft, reason: string): Promise<Omit<ConfirmedDraft, "conversation" | "systemMessages">> {
   const code = draft.ticketCode;
   const ticket = await reopenTicket(scope, code, reason);
   const message = await writeAgentMessage(
@@ -318,10 +322,10 @@ export async function confirmPendingDraft(
 ): Promise<ConfirmedDraft> {
   const { conversationId, draft } = await claimDraft(tx, ownerId, draftId, now);
   const scope = { tx, ownerId, conversationId, now };
-  const withAgent = { id: conversationId, status: "WITH_AGENT" } as const;
-  if (draft.kind === "COMPLEMENT" && request.kind === "COMPLEMENT") return { ...(await confirmComplement(scope, draft, request.content)), conversation: withAgent };
+  const withAgent = { conversation: { id: conversationId, status: "WITH_AGENT" as const }, systemMessages: [] };
+  if (draft.kind === "COMPLEMENT" && request.kind === "COMPLEMENT") return { ...(await confirmComplement(scope, draft, request.content)), ...withAgent };
   if (draft.kind === "CREATE" && request.kind === "CREATE") return confirmCreation(scope, draft, request);
-  if (draft.kind === "REOPEN" && request.kind === "REOPEN") return { ...(await confirmReopen(scope, draft, request.reason)), conversation: withAgent };
+  if (draft.kind === "REOPEN" && request.kind === "REOPEN") return { ...(await confirmReopen(scope, draft, request.reason)), ...withAgent };
   throw new DraftKindMismatchError();
 }
 
@@ -365,8 +369,8 @@ function cancellationOf(draft: ConfirmableDraft): { content: string; trace: Agen
 export async function cancelPendingDraft(
   tx: DraftTransaction,
   { ownerId, draftId, now }: { ownerId: string; draftId: string; now: Date },
-): Promise<{ message: StoredAgentMessage }> {
+): Promise<{ message: StoredAgentMessage; conversationId: string }> {
   const { conversationId, draft } = await claimDraft(tx, ownerId, draftId, now);
   const { content, trace } = cancellationOf(draft);
-  return { message: await writeAgentMessage(tx, conversationId, content, trace, now) };
+  return { message: await writeAgentMessage(tx, conversationId, content, trace, now), conversationId };
 }

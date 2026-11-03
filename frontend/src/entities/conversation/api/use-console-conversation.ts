@@ -10,7 +10,6 @@ export function useConsoleConversation(id: string | null) {
     queryKey: consoleConversationKeys.detail(id ?? ""),
     queryFn: () => getConsoleConversation(id ?? ""),
     enabled: id !== null,
-    refetchInterval: 15_000,
     // O cabeçalho aparece na hora, com o item da lista, enquanto o detalhe chega.
     placeholderData: () =>
       queryClient

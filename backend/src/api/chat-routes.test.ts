@@ -3,10 +3,12 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../app.js";
+import { createEventBus } from "../realtime/event-bus.js";
 import { createAuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
 import { AgentUnavailableError, type AgentRunner, type AgentTurnInput, type AgentTurnResult } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
+import { createConversationQueries } from "../conversations/conversation-queries.js";
 import { createConversationService, type ConversationService } from "../conversations/conversation-service.js";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
@@ -15,6 +17,10 @@ import type { ChatResponse, TicketLookupResult } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleService } from "./test-support.js";
+
+/** Turno com o agent: a resposta do agent está sempre presente. */
+type AgentChatResponse = ChatResponse & { message: NonNullable<ChatResponse["message"]> };
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -137,8 +143,8 @@ describe("POST /chat", () => {
       completeTurn: (reservation, message) =>
         completeTurnFailure ? Promise.reject(completeTurnFailure) : real.completeTurn(reservation, message),
     };
-    const chatService = createChatService({ conversations, agentRunner: agent.runner, tickets: createTicketService(client) });
-    server = createApp({ config, authService: createAuthService(client), chatService }).listen(0);
+    const chatService = createChatService({ queries: createConversationQueries(client), conversations, agentRunner: agent.runner, tickets: createTicketService(client) });
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -161,15 +167,16 @@ describe("POST /chat", () => {
       const res = await post({ message: "  Cadê meu chamado?  " });
       assert.equal(res.status, 200);
       assert.equal(res.headers.get("cache-control"), "no-store");
-      const body = (await res.json()) as ChatResponse;
+      const body = (await res.json()) as AgentChatResponse;
 
-      assert.deepEqual(Object.keys(body).sort(), ["conversation", "message", "quickReplies", "ticketDraft", "ticketLookup"]);
+      assert.deepEqual(Object.keys(body).sort(), ["conversation", "employeeMessage", "message", "quickReplies", "ticketDraft", "ticketLookup"]);
       assert.deepEqual(body.conversation, {
         id: body.conversation.id,
         status: "WITH_AGENT",
         messageCount: 1,
         messageLimit: 30,
         remainingMessages: 29,
+        analyst: null,
       });
       assert.equal(body.message.authorType, "AGENT");
       assert.equal(body.message.content, "Seu chamado está aguardando analista.");
@@ -187,11 +194,11 @@ describe("POST /chat", () => {
     });
 
     it("com conversationId continua e entrega o histórico ao runner", async () => {
-      const first = (await (await post({ message: "primeira" })).json()) as ChatResponse;
+      const first = (await (await post({ message: "primeira" })).json()) as AgentChatResponse;
       agent.inputs.length = 0;
       const res = await post({ message: "segunda", conversationId: first.conversation.id });
       assert.equal(res.status, 200);
-      const body = (await res.json()) as ChatResponse;
+      const body = (await res.json()) as AgentChatResponse;
       assert.equal(body.conversation.id, first.conversation.id);
       assert.equal(body.conversation.messageCount, 2);
       assert.equal(body.conversation.remainingMessages, 28);
@@ -204,19 +211,20 @@ describe("POST /chat", () => {
             { authorType: "AGENT", content: "Seu chamado está aguardando analista." },
           ],
           message: "segunda",
+          returnedFromAnalyst: false,
         },
       ]);
     });
 
     it("devolve ticketLookup exatamente como veio do runner", async () => {
       agent.respond = () => Promise.resolve(reply({ ticketLookup: LOOKUP }));
-      const body = (await (await post({ message: "oi" })).json()) as ChatResponse;
+      const body = (await (await post({ message: "oi" })).json()) as AgentChatResponse;
       assert.deepEqual(body.ticketLookup, LOOKUP);
     });
 
     it("aceita a 30ª mensagem com remainingMessages 0 sem encerrar", async () => {
       const { id } = await createConversation({ messageCount: 29 });
-      const body = (await (await post({ message: "última", conversationId: id })).json()) as ChatResponse;
+      const body = (await (await post({ message: "última", conversationId: id })).json()) as AgentChatResponse;
       assert.equal(body.conversation.messageCount, 30);
       assert.equal(body.conversation.remainingMessages, 0);
       assert.equal(body.conversation.status, "WITH_AGENT");
@@ -298,10 +306,13 @@ describe("POST /chat", () => {
     });
 
     for (const status of ["WAITING_ANALYST", "WITH_ANALYST"] as const) {
-      it(`responde 409 para conversa em ${status}`, async () => {
+      it(`em ${status} grava a mensagem sem chamar a LLM`, async () => {
         const { id } = await createConversation({ status, messageCount: 2 });
         const res = await post({ message: "oi", conversationId: id });
-        await assertRefusedWithoutEffects(res, 409, "CONVERSATION_NOT_WITH_AGENT", id, 2);
+        assert.equal(res.status, 200);
+        assert.equal(((await res.json()) as AgentChatResponse).message, null);
+        assert.equal(agent.inputs.length, 0);
+        assert.equal((await client.conversation.findUniqueOrThrow({ where: { id } })).messageCount, 3);
       });
     }
   });

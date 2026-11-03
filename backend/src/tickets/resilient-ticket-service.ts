@@ -37,6 +37,7 @@ export function createResilientTicketService(service: FullTicketService, options
     findSimilarTickets: (ownerId, keywords, now, filter) =>
       withRetry(() => (filter ? service.findSimilarTickets(ownerId, keywords, now, filter) : service.findSimilarTickets(ownerId, keywords, now)), options),
     findResolvedTicketByCode: (ownerId, code, now) => withRetry(() => service.findResolvedTicketByCode(ownerId, code, now), options),
+    listOwnerTickets: (ownerId) => withRetry(() => service.listOwnerTickets(ownerId), options),
     ensureAvailable: () => withRetry(() => service.ensureAvailable(), options),
   };
 }
@@ -48,6 +49,7 @@ export function createUnavailableTicketService(): FullTicketService {
     findOpenTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()),
     findSimilarTickets: () => Promise.reject(new TicketServiceUnavailableError()),
     findResolvedTicketByCode: () => Promise.reject(new TicketServiceUnavailableError()),
+    listOwnerTickets: () => Promise.reject(new TicketServiceUnavailableError()),
     ensureAvailable: () => Promise.reject(new TicketServiceUnavailableError()),
   };
 }

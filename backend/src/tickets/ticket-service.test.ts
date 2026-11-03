@@ -204,6 +204,32 @@ describe("TicketService", () => {
     });
   });
 
+  describe("listOwnerTickets", () => {
+    it("traz só os do dono: abertos por updatedAt desc e depois resolvidos por resolvedAt desc", async () => {
+      const open1 = await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(1));
+      const open2 = await createTicket(ownerId, "INC-2", "WAITING_EMPLOYEE", null);
+      const done1 = await createTicket(ownerId, "INC-3", "RESOLVED", null);
+      const done2 = await createTicket(ownerId, "INC-4", "RESOLVED", null);
+      await createTicket(otherOwnerId, "INC-9", "IN_PROGRESS", hoursFromNow(1));
+      await client.ticket.update({ where: { id: open1.id }, data: { updatedAt: hoursFromNow(-5) } });
+      await client.ticket.update({ where: { id: open2.id }, data: { updatedAt: hoursFromNow(-1) } });
+      await client.ticket.update({ where: { id: done1.id }, data: { resolvedAt: hoursFromNow(-30) } });
+      await client.ticket.update({ where: { id: done2.id }, data: { resolvedAt: hoursFromNow(-10) } });
+
+      const tickets = await service.listOwnerTickets(ownerId);
+      assert.deepEqual(tickets.map((t) => t.code), ["INC-2", "INC-1", "INC-4", "INC-3"]);
+      const [first] = tickets;
+      assert.equal(first?.statusLabel, "Aguardando funcionário");
+      assert.equal(first?.resolvedAt, null);
+      assert.equal(tickets[2]?.resolvedAt, hoursFromNow(-10).toISOString());
+      assert.equal("description" in (first ?? {}), false);
+    });
+
+    it("sem chamados devolve lista vazia", async () => {
+      assert.deepEqual(await service.listOwnerTickets(ownerId), []);
+    });
+  });
+
   describe("ensureAvailable", () => {
     it("resolve com o banco no ar", async () => {
       await service.ensureAvailable();

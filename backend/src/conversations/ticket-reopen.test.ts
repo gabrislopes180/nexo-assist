@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
+import { startAgentTurn } from "./test-helpers.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ProposedTicketDraft, SimilarTicket } from "../shared/chat.js";
 import { reopenDraftSchema } from "../shared/conversation-draft.js";
@@ -78,7 +79,7 @@ describe("reabertura de chamado por rascunho", () => {
   }
 
   async function conversationWithDraft(at = T0) {
-    const turn = await service.startTurn(ownerId, { content: "voltou o problema", now: at });
+    const turn = await startAgentTurn(service, ownerId, { content: "voltou o problema", now: at });
     const stored = await service.completeTurn(turn, { content: "Confirma?", trace: TRACE, ticketDraft: proposalFor(), now: at });
     assert.ok(stored.draftId);
     return { conversationId: turn.conversationId, draftId: stored.draftId };

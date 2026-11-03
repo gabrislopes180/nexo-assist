@@ -1,18 +1,18 @@
-import { consoleRequest } from "@/shared/api/console-request";
+import { apiRequest } from "@/shared/api/http-client";
 import {
   consoleConversationListResponseSchema,
   consoleConversationResponseSchema,
 } from "../model/console-conversation";
 
 export async function getConsoleConversations() {
-  const { conversations } = await consoleRequest("/console/conversations", {
+  const { conversations } = await apiRequest("/console/conversations", {
     schema: consoleConversationListResponseSchema,
   });
   return conversations;
 }
 
 export async function getConsoleConversation(id: string) {
-  const { conversation } = await consoleRequest(
+  const { conversation } = await apiRequest(
     `/console/conversations/${encodeURIComponent(id)}`,
     { schema: consoleConversationResponseSchema },
   );

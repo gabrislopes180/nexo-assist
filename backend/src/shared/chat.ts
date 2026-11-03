@@ -8,6 +8,7 @@ import {
 } from "../generated/prisma/enums.js";
 import { OPEN_STATUSES } from "../tickets/ticket-rules.js";
 import { boundedText, createDraftSchema } from "./conversation-draft.js";
+import type { TimelineMessageView } from "./console.js";
 import type { AgentTrace } from "./transparency.js";
 
 const userText = boundedText(2000);
@@ -150,13 +151,22 @@ export const handoffProposalSchema = z.strictObject({
 
 export type HandoffProposal = z.infer<typeof handoffProposalSchema>;
 
+export type Person = { id: string; name: string };
+
 export type ChatConversationView = {
   id: string;
   status: ConversationStatus;
   messageCount: number;
   messageLimit: number;
+  /** Cota com o agent; com analista a mensagem é aceita mesmo em 0. */
   remainingMessages: number;
+  analyst: Person | null;
 };
+
+export type EmployeeMessageView = { id: string; authorType: "EMPLOYEE"; content: string; createdAt: string };
+
+/** `GET /chat/conversations/:id`: polling e ressincronização do funcionário. */
+export type ChatConversationDetail = { conversation: ChatConversationView; messages: TimelineMessageView[] };
 
 export type ChatMessageView = {
   id: string;
@@ -168,7 +178,10 @@ export type ChatMessageView = {
 
 export type ChatResponse = {
   conversation: ChatConversationView;
-  message: ChatMessageView;
+  /** A mensagem gravada do funcionário; o id real substitui o item otimista e deduplica com o SSE. */
+  employeeMessage: EmployeeMessageView;
+  /** Null quando a conversa está com analista: a mensagem foi só gravada, sem LLM. */
+  message: ChatMessageView | null;
   /** Vem do serviço de chamados, nunca do texto da LLM. Null quando nenhuma tool rodou. */
   ticketLookup: TicketLookupResult | null;
   /** Null quando o turno não propôs rascunho; um rascunho anterior continua valendo. */

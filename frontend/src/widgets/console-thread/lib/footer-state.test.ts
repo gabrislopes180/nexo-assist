@@ -15,16 +15,20 @@ describe("footerState", () => {
     expect(footerState(conv({}))).toEqual({ kind: "takeover" });
   });
 
+  it("libera o envio quando a conversa é minha", () => {
+    expect(
+      footerState(
+        conv({
+          status: "WITH_ANALYST",
+          assignedToMe: true,
+          analyst: { id: "a", name: "Rafael Lima" },
+        }),
+      ),
+    ).toEqual({ kind: "reply" });
+  });
+
   it.each([
     [{ status: "WITH_AGENT" }, "O Nexo Assist está atendendo esta conversa"],
-    [
-      {
-        status: "WITH_ANALYST",
-        assignedToMe: true,
-        analyst: { id: "a", name: "Rafael Lima" },
-      },
-      "Responder ao funcionário ainda não está disponível",
-    ],
     [
       { status: "WITH_ANALYST", analyst: { id: "b", name: "Bruno Martins" } },
       "Bruno está atendendo esta conversa",

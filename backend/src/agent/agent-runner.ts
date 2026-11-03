@@ -75,6 +75,7 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
       requestContext.set("overdueOfferCode", lastMessage?.authorType === "AGENT" ? overdueOfferCodeFrom([lastMessage.content]) : null);
       requestContext.set("offerDeclinedRecently", offerDeclinedIn(input.history));
       requestContext.set("knownCodes", knownCodesFrom(input.history));
+      requestContext.set("returnedFromAnalyst", input.returnedFromAnalyst);
       requestContext.set("recorder", recorder);
 
       const startedAt = Date.now();
@@ -100,7 +101,8 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
           drafts: recorder.drafts(),
           handoffs: recorder.handoffs(),
           overdueOfferActive: requestContext.get("overdueOfferCode") !== null,
-          suppressOverdueOffer: declinesPerson(input.message) || offerDeclinedIn(input.history),
+          // Depois que um analista devolveu a conversa, o agent não oferece analista de novo.
+          suppressOverdueOffer: declinesPerson(input.message) || offerDeclinedIn(input.history) || input.returnedFromAnalyst,
         });
         if (!reply) throw new AgentUnavailableError();
         return { ...reply, quickReplies: reply.quickReplies ?? null, handoff: reply.handoff ?? null };

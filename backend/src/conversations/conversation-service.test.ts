@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
+import { startAgentTurn } from "./test-helpers.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
 import type { AgentTrace } from "../shared/transparency.js";
@@ -67,7 +68,7 @@ describe("ConversationService", () => {
 
   describe("startTurn", () => {
     it("sem conversationId cria a conversa com a primeira mensagem", async () => {
-      const turn = await service.startTurn(ownerId, { content: "oi", now: T0 });
+      const turn = await startAgentTurn(service, ownerId, { content: "oi", now: T0 });
       assert.equal(turn.isNew, true);
       assert.equal(turn.messageCount, 1);
       assert.equal(turn.status, "WITH_AGENT");
@@ -89,7 +90,7 @@ describe("ConversationService", () => {
 
     it("com conversationId continua a conversa e conta a mensagem", async () => {
       const { id } = await createConversation({ messageCount: 3 });
-      const turn = await service.startTurn(ownerId, { conversationId: id, content: "de novo", now: T1 });
+      const turn = await startAgentTurn(service, ownerId, { conversationId: id, content: "de novo", now: T1 });
       assert.equal(turn.isNew, false);
       assert.equal(turn.conversationId, id);
       assert.equal(turn.messageCount, 4);
@@ -99,42 +100,65 @@ describe("ConversationService", () => {
 
     it("aceita a 30ª mensagem", async () => {
       const { id } = await createConversation({ messageCount: 29 });
-      const turn = await service.startTurn(ownerId, { conversationId: id, content: "última", now: T1 });
+      const turn = await startAgentTurn(service, ownerId, { conversationId: id, content: "última", now: T1 });
       assert.equal(turn.messageCount, 30);
     });
 
     it("recusa a 31ª sem gravar nada e sem encerrar a conversa", async () => {
       const { id } = await createConversation({ messageCount: 30 });
-      await assert.rejects(service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 }), ConversationMessageLimitReachedError);
+      await assert.rejects(startAgentTurn(service, ownerId, { conversationId: id, content: "x", now: T1 }), ConversationMessageLimitReachedError);
       assert.deepEqual(await snapshot(id), { messageCount: 30, lastMessageAt: T0, status: "WITH_AGENT", messages: 0 });
     });
 
     it("responde igual para conversa inexistente e de outro dono, sem gravar nada", async () => {
       const { id } = await createConversation({ owner: otherOwnerId, messageCount: 2 });
-      await assert.rejects(service.startTurn(ownerId, { conversationId: "nao-existe", content: "x", now: T1 }), ConversationNotFoundError);
-      await assert.rejects(service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 }), ConversationNotFoundError);
+      await assert.rejects(startAgentTurn(service, ownerId, { conversationId: "nao-existe", content: "x", now: T1 }), ConversationNotFoundError);
+      await assert.rejects(startAgentTurn(service, ownerId, { conversationId: id, content: "x", now: T1 }), ConversationNotFoundError);
       assert.deepEqual(await snapshot(id), { messageCount: 2, lastMessageAt: T0, status: "WITH_AGENT", messages: 0 });
     });
 
     it("recusa conversa encerrada, mesmo com o limite atingido", async () => {
       const { id } = await createConversation({ status: "CLOSED", messageCount: 30 });
-      await assert.rejects(service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 }), ConversationClosedError);
+      await assert.rejects(startAgentTurn(service, ownerId, { conversationId: id, content: "x", now: T1 }), ConversationClosedError);
       assert.equal((await snapshot(id)).messages, 0);
     });
 
     for (const status of ["WAITING_ANALYST", "WITH_ANALYST"] as const) {
-      it(`recusa conversa em ${status}`, async () => {
+      it(`em ${status} grava a mensagem para o analista, sem turno do agent`, async () => {
         const { id } = await createConversation({ status, messageCount: 2 });
-        await assert.rejects(service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 }), ConversationNotWithAgentError);
-        assert.deepEqual(await snapshot(id), { messageCount: 2, lastMessageAt: T0, status, messages: 0 });
+        const start = await service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 });
+        assert.equal(start.kind, "STORED_FOR_ANALYST");
+        assert.ok(start.kind === "STORED_FOR_ANALYST");
+        assert.equal(start.employeeMessage.authorType, "EMPLOYEE");
+        assert.equal(start.employeeMessage.author?.id, ownerId);
+        assert.deepEqual(start.employeeMessage.createdAt, T1);
+        assert.equal(start.conversation.status, status);
+        assert.equal(start.conversation.messageCount, 3);
+        assert.deepEqual(await snapshot(id), { messageCount: 3, lastMessageAt: T1, status, messages: 1 });
       });
     }
+
+    it("com o analista, aceita além do limite de 30", async () => {
+      const { id } = await createConversation({ status: "WITH_ANALYST", messageCount: 30 });
+      const start = await service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 });
+      assert.ok(start.kind === "STORED_FOR_ANALYST");
+      assert.equal(start.conversation.messageCount, 31);
+    });
+
+    it("conversa devolvida ao agent volta a ser turno do agent, com returnedToAgentAt na reserva", async () => {
+      const { id } = await createConversation({ messageCount: 2 });
+      await client.conversation.update({ where: { id }, data: { returnedToAgentAt: T0 } });
+      const turn = await startAgentTurn(service, ownerId, { conversationId: id, content: "voltei", now: T1 });
+      assert.deepEqual(turn.returnedToAgentAt, T0);
+      assert.equal(turn.employeeMessage.content, "voltei");
+      assert.equal(turn.employeeMessage.id, turn.employeeMessageId);
+    });
 
     it("em concorrência na 29ª só aceita um turno", async () => {
       const { id } = await createConversation({ messageCount: 29 });
       const results = await Promise.allSettled([
-        service.startTurn(ownerId, { conversationId: id, content: "a", now: T1 }),
-        service.startTurn(ownerId, { conversationId: id, content: "b", now: T1 }),
+        startAgentTurn(service, ownerId, { conversationId: id, content: "a", now: T1 }),
+        startAgentTurn(service, ownerId, { conversationId: id, content: "b", now: T1 }),
       ]);
       const rejected = results.filter((result) => result.status === "rejected");
       assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
@@ -164,7 +188,7 @@ describe("ConversationService", () => {
             { conversationId: id, authorType: "ANALYST", content: "três", createdAt: at(10) },
           ],
         });
-        const turn = await service.startTurn(ownerId, { conversationId: id, content: "atual", now: T1 });
+        const turn = await startAgentTurn(service, ownerId, { conversationId: id, content: "atual", now: T1 });
         assert.deepEqual(turn.history, [
           { authorType: "EMPLOYEE", content: "um" },
           { authorType: "AGENT", content: "dois" },
@@ -175,7 +199,7 @@ describe("ConversationService", () => {
       it("limita às últimas 20 mensagens", async () => {
         const { id } = await createConversation({ messageCount: 10 });
         await addMessages(id, 25);
-        const turn = await service.startTurn(ownerId, { conversationId: id, content: "atual", now: T1 });
+        const turn = await startAgentTurn(service, ownerId, { conversationId: id, content: "atual", now: T1 });
         assert.equal(turn.history.length, 20);
         assert.equal(turn.history[0]?.content, "m5");
         assert.equal(turn.history[19]?.content, "m24");
@@ -185,7 +209,7 @@ describe("ConversationService", () => {
 
   describe("completeTurn", () => {
     it("grava a mensagem do agent com trace e atualiza lastMessageAt", async () => {
-      const turn = await service.startTurn(ownerId, { content: "oi", now: T0 });
+      const turn = await startAgentTurn(service, ownerId, { content: "oi", now: T0 });
       const stored = await service.completeTurn(turn, { content: "olá", trace: TRACE, now: T1 });
       assert.equal(stored.content, "olá");
       assert.deepEqual(stored.trace, TRACE);
@@ -201,7 +225,7 @@ describe("ConversationService", () => {
 
   describe("abortTurn", () => {
     it("apaga a conversa nova junto com a mensagem", async () => {
-      const turn = await service.startTurn(ownerId, { content: "oi", now: T0 });
+      const turn = await startAgentTurn(service, ownerId, { content: "oi", now: T0 });
       await service.abortTurn(turn);
       assert.equal(await client.conversation.count({ where: { id: turn.conversationId } }), 0);
       assert.equal(await client.message.count({ where: { id: turn.employeeMessageId } }), 0);
@@ -209,9 +233,9 @@ describe("ConversationService", () => {
 
     it("na conversa existente desfaz só o turno e restaura os contadores", async () => {
       const { id } = await createConversation({ messageCount: 2 });
-      const first = await service.startTurn(ownerId, { conversationId: id, content: "fica", now: T1 });
+      const first = await startAgentTurn(service, ownerId, { conversationId: id, content: "fica", now: T1 });
       await service.completeTurn(first, { content: "resposta", trace: TRACE, now: T1 });
-      const failed = await service.startTurn(ownerId, { conversationId: id, content: "sai", now: T2 });
+      const failed = await startAgentTurn(service, ownerId, { conversationId: id, content: "sai", now: T2 });
       await service.abortTurn(failed);
       assert.deepEqual(await snapshot(id), { messageCount: 3, lastMessageAt: T1, status: "WITH_AGENT", messages: 2 });
       assert.equal(await client.message.count({ where: { id: failed.employeeMessageId } }), 0);
@@ -219,8 +243,8 @@ describe("ConversationService", () => {
 
     it("devolve a vaga do limite", async () => {
       const { id } = await createConversation({ messageCount: 29 });
-      await service.abortTurn(await service.startTurn(ownerId, { conversationId: id, content: "a", now: T1 }));
-      const retried = await service.startTurn(ownerId, { conversationId: id, content: "b", now: T2 });
+      await service.abortTurn(await startAgentTurn(service, ownerId, { conversationId: id, content: "a", now: T1 }));
+      const retried = await startAgentTurn(service, ownerId, { conversationId: id, content: "b", now: T2 });
       assert.equal(retried.messageCount, 30);
     });
   });

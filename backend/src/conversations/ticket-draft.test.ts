@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
+import { startAgentTurn } from "./test-helpers.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, TicketStatus } from "../generated/prisma/enums.js";
 import type { ProposedTicketDraft } from "../shared/chat.js";
@@ -63,7 +64,7 @@ describe("rascunho de complemento", () => {
 
   /** Conversa com um rascunho salvo pelo caminho real, o `completeTurn`. */
   async function conversationWithDraft() {
-    const turn = await service.startTurn(ownerId, { content: "complementa aí", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "complementa aí", now: T0 });
     const stored = await service.completeTurn(turn, { content: "Confirma?", trace: TRACE, ticketDraft: proposal, now: T0 });
     assert.ok(stored.draftId);
     return { conversationId: turn.conversationId, draftId: stored.draftId };
@@ -108,7 +109,7 @@ describe("rascunho de complemento", () => {
 
     it("sem rascunho no turno mantém o anterior", async () => {
       const { conversationId, draftId } = await conversationWithDraft();
-      const turn = await service.startTurn(ownerId, { conversationId, content: "e o prazo?", now: T1 });
+      const turn = await startAgentTurn(service, ownerId, { conversationId, content: "e o prazo?", now: T1 });
       const stored = await service.completeTurn(turn, { content: "Amanhã.", trace: TRACE, now: T1 });
       assert.equal(stored.draftId, null);
       assert.equal(await draftIdOf(conversationId), draftId);
@@ -116,7 +117,7 @@ describe("rascunho de complemento", () => {
 
     it("um rascunho novo substitui o anterior", async () => {
       const { conversationId, draftId } = await conversationWithDraft();
-      const turn = await service.startTurn(ownerId, { conversationId, content: "troca", now: T1 });
+      const turn = await startAgentTurn(service, ownerId, { conversationId, content: "troca", now: T1 });
       const stored = await service.completeTurn(turn, { content: "Confirma?", trace: TRACE, ticketDraft: proposal, now: T1 });
       assert.notEqual(stored.draftId, draftId);
       assert.equal(await draftIdOf(conversationId), stored.draftId);
@@ -125,7 +126,7 @@ describe("rascunho de complemento", () => {
 
     it("turno desfeito não deixa rascunho nem mexe no anterior", async () => {
       const { conversationId, draftId } = await conversationWithDraft();
-      await service.abortTurn(await service.startTurn(ownerId, { conversationId, content: "falha", now: T1 }));
+      await service.abortTurn(await startAgentTurn(service, ownerId, { conversationId, content: "falha", now: T1 }));
       assert.equal(await draftIdOf(conversationId), draftId);
     });
   });

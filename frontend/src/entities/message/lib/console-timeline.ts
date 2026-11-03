@@ -1,5 +1,6 @@
 import { formatDayLabel, formatTime } from "@/shared/lib/format-date";
 import type { ConsoleMessageData } from "../model/console-message";
+import { systemEventIcon, type SystemEventIcon } from "./system-event-icon";
 
 export type ConsoleTimelineItem =
   | { kind: "day"; key: string; label: string }
@@ -15,7 +16,7 @@ export type ConsoleTimelineItem =
       dateTime: string;
       long: boolean;
     }
-  | { kind: "event"; key: string; icon: "transfer" | null; label: string };
+  | { kind: "event"; key: string; icon: SystemEventIcon | null; label: string };
 
 const FROM = {
   EMPLOYEE: "client",
@@ -61,7 +62,7 @@ export function buildConsoleTimeline(
         icon:
           handoffAt !== null && message.createdAt === handoffAt
             ? "transfer"
-            : null,
+            : systemEventIcon(message.content),
         label: `${message.content} · ${formatTime(message.createdAt)}`,
       });
       previous = message;

@@ -7,7 +7,7 @@ export interface ConversationTicketEvent {
   time: string | null;
 }
 
-/** Rodapé do card "Desta conversa". O modelo não guarda a hora de assumir. */
+/** Rodapé do card "Desta conversa": transferência ou quem assumiu, com a hora. */
 export function conversationTicketEvent(
   c: ConsoleConversation,
 ): ConversationTicketEvent | null {
@@ -22,7 +22,7 @@ export function conversationTicketEvent(
     return {
       icon: "headset",
       text: `Assumido por ${c.analyst.name}`,
-      time: null,
+      time: c.assignedAt ? formatTime(c.assignedAt) : null,
     };
   }
   return null;

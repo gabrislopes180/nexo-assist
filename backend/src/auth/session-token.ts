@@ -17,8 +17,8 @@ export function issueSessionToken(input: { userId: string; secret: string; now: 
     .sign(signingKey(input.secret));
 }
 
-/** Nunca lança: qualquer token que não seja válido neste instante retorna `null`. */
-export async function verifySessionToken(input: { token: string; secret: string; now: Date }): Promise<{ userId: string } | null> {
+/** Nunca lança: qualquer token que não seja válido neste instante retorna `null`. `expiresAt` vem de `exp`. */
+export async function verifySessionToken(input: { token: string; secret: string; now: Date }): Promise<{ userId: string; expiresAt: Date } | null> {
   try {
     const { payload } = await jwtVerify(input.token, signingKey(input.secret), {
       algorithms: ["HS256"],
@@ -26,7 +26,8 @@ export async function verifySessionToken(input: { token: string; secret: string;
       requiredClaims: ["sub", "exp"],
     });
     // O jose não valida o tipo de `sub` em runtime.
-    return typeof payload.sub === "string" && payload.sub !== "" ? { userId: payload.sub } : null;
+    if (typeof payload.sub !== "string" || payload.sub === "" || typeof payload.exp !== "number") return null;
+    return { userId: payload.sub, expiresAt: new Date(payload.exp * 1000) };
   } catch {
     return null;
   }

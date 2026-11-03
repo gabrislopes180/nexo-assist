@@ -168,20 +168,22 @@ model Article {
 }
 
 model Conversation {
-  id             String             @id @default(cuid())
-  ownerId        String
-  status         ConversationStatus @default(WITH_AGENT)
-  analystId      String?
-  handoffSummary String?
-  handoffReason  HandoffReason?
-  handoffAt      DateTime?
-  messageCount   Int                @default(0) // só mensagens do FUNCIONÁRIO; limite 30
-  pendingDraft   Json?
-  pendingDraftId String?
-  lastMessageAt  DateTime           @default(now())
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  closedAt       DateTime?
+  id                String             @id @default(cuid())
+  ownerId           String
+  status            ConversationStatus @default(WITH_AGENT)
+  analystId         String?
+  handoffSummary    String?
+  handoffReason     HandoffReason?
+  handoffAt         DateTime?
+  messageCount      Int                @default(0) // só mensagens do FUNCIONÁRIO; limite 30
+  pendingDraft      Json?
+  pendingDraftId    String?
+  lastMessageAt     DateTime           @default(now())
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  closedAt          DateTime?
+  assignedAt        DateTime? // quando o analista atual assumiu; null fora de WITH_ANALYST (mantido em CLOSED)
+  returnedToAgentAt DateTime? // última devolução ao agent; liga a política "só pedido explícito" no agent
 
   owner        User          @relation("ConversationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   analyst      User?         @relation("ConversationAnalyst", fields: [analystId], references: [id], onDelete: SetNull)

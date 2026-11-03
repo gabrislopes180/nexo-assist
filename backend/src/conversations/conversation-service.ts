@@ -3,17 +3,22 @@ import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
 import type { ConfirmDraftRequest, HandoffProposal, ProposedTicketDraft } from "../shared/chat.js";
 import type { ConfirmableDraft } from "../shared/conversation-draft.js";
+import { noopPublisher, type ChangePublisher, type ConversationChange } from "../shared/conversation-events.js";
+import { describeErrorForLog } from "../shared/safe-error.js";
 import type { AgentTrace } from "../shared/transparency.js";
-import { CONVERSATION_MESSAGE_LIMIT, ConversationNotWithAgentError } from "./conversation-rules.js";
+import { CONVERSATION_MESSAGE_LIMIT, ConversationNotFoundError, ConversationNotWithAgentError } from "./conversation-rules.js";
+import * as attendance from "./attendance.js";
+import {
+  readSnapshot,
+  timelineMessageSelect,
+  toTimelineMessage,
+  type AttendanceResult,
+  type ConversationSnapshot,
+  type Person,
+  type TimelineMessage,
+} from "./timeline.js";
 import { transferToAnalyst } from "./handoff.js";
 import { cancelPendingDraft, confirmPendingDraft, readPendingDraft, type ConfirmedDraft, type StoredAgentMessage } from "./ticket-draft.js";
-
-export class ConversationNotFoundError extends Error {
-  constructor() {
-    super("Conversa não encontrada");
-    this.name = "ConversationNotFoundError";
-  }
-}
 
 export class ConversationMessageLimitReachedError extends Error {
   constructor() {
@@ -29,7 +34,7 @@ export class ConversationClosedError extends Error {
   }
 }
 
-export { ConversationNotWithAgentError };
+export { ConversationNotFoundError, ConversationNotWithAgentError };
 
 export type HistoryAuthorType = Extract<MessageAuthorType, "EMPLOYEE" | "AGENT" | "ANALYST">;
 export type HistoryMessage = { authorType: HistoryAuthorType; content: string };
@@ -38,11 +43,19 @@ export type TurnReservation = {
   conversationId: string;
   isNew: boolean;
   employeeMessageId: string;
+  employeeMessage: TimelineMessage;
   messageCount: number;
   status: ConversationStatus;
   previousLastMessageAt: Date;
+  /** Preenchido se um analista já devolveu esta conversa ao agent. */
+  returnedToAgentAt: Date | null;
   history: HistoryMessage[];
 };
+
+/** Com o agent, o turno vai à LLM; com analista, a mensagem só é gravada. */
+export type TurnStart =
+  | { kind: "AGENT_TURN"; reservation: TurnReservation }
+  | { kind: "STORED_FOR_ANALYST"; employeeMessage: TimelineMessage; conversation: ConversationSnapshot };
 
 export type { StoredAgentMessage };
 
@@ -57,17 +70,21 @@ export type AgentReply = {
 };
 
 export type ConversationService = {
-  startTurn(ownerId: string, input: { conversationId?: string; content: string; now: Date }): Promise<TurnReservation>;
+  startTurn(ownerId: string, input: { conversationId?: string; content: string; now: Date }): Promise<TurnStart>;
   /** Grava resposta e rascunho na mesma transação: turno que falha não deixa rascunho. */
   /** Devolve o estado da conversa relido no fim da transação. */
   completeTurn(
     reservation: TurnReservation,
     reply: AgentReply,
-  ): Promise<StoredAgentMessage & { draftId: string | null; conversationStatus: ConversationStatus }>;
+  ): Promise<StoredAgentMessage & { draftId: string | null; conversationStatus: ConversationStatus; systemMessages: TimelineMessage[] }>;
   abortTurn(reservation: TurnReservation): Promise<void>;
   readDraft(ownerId: string, draftId: string): Promise<ConfirmableDraft>;
   confirmDraft(ownerId: string, draftId: string, request: ConfirmDraftRequest, now: Date): Promise<ConfirmedDraft>;
   cancelDraft(ownerId: string, draftId: string, now: Date): Promise<{ message: StoredAgentMessage }>;
+  takeOver(conversationId: string, analyst: Person, now: Date): Promise<AttendanceResult>;
+  replyAsAnalyst(conversationId: string, analyst: Person, content: string, now: Date): Promise<AttendanceResult & { message: TimelineMessage }>;
+  returnToAgent(conversationId: string, analyst: Person, now: Date): Promise<AttendanceResult>;
+  closeAttendance(conversationId: string, analyst: Person, now: Date): Promise<AttendanceResult>;
 };
 
 const HISTORY_LIMIT = 20;
@@ -97,70 +114,98 @@ async function readHistory(client: TurnClient, conversationId: string): Promise<
   return rows.reverse().flatMap(({ authorType, content }) => (isHistoryAuthor(authorType) ? [{ authorType, content }] : []));
 }
 
-async function createConversationTurn(client: TurnClient, ownerId: string, content: string, now: Date): Promise<TurnReservation> {
+const employeeMessageData = (conversationId: string, ownerId: string, content: string, now: Date) =>
+  ({ conversationId, authorType: "EMPLOYEE", authorId: ownerId, content, createdAt: now }) as const;
+
+async function createConversationTurn(client: TurnClient, ownerId: string, content: string, now: Date): Promise<TurnStart> {
   const conversation = await client.conversation.create({
-    data: {
-      ownerId,
-      status: "WITH_AGENT",
-      messageCount: 1,
-      lastMessageAt: now,
-      createdAt: now,
-      messages: { create: { authorType: "EMPLOYEE", authorId: ownerId, content, createdAt: now } },
-    },
-    select: { id: true, status: true, messages: { select: { id: true } } },
+    data: { ownerId, status: "WITH_AGENT", messageCount: 1, lastMessageAt: now, createdAt: now },
+    select: { id: true, status: true },
   });
-  const [message] = conversation.messages;
-  if (!message) throw new Error("Conversa criada sem a mensagem do funcionário");
+  const message = toTimelineMessage(
+    await client.message.create({ data: employeeMessageData(conversation.id, ownerId, content, now), select: timelineMessageSelect }),
+  );
   return {
-    conversationId: conversation.id,
-    isNew: true,
-    employeeMessageId: message.id,
-    messageCount: 1,
-    status: conversation.status,
-    previousLastMessageAt: now,
-    history: [],
+    kind: "AGENT_TURN",
+    reservation: {
+      conversationId: conversation.id,
+      isNew: true,
+      employeeMessageId: message.id,
+      employeeMessage: message,
+      messageCount: 1,
+      status: conversation.status,
+      previousLastMessageAt: now,
+      returnedToAgentAt: null,
+      history: [],
+    },
   };
 }
 
+const ANALYST_STATUSES = ["WAITING_ANALYST", "WITH_ANALYST"] as const;
+
+/**
+ * Com o agent, o incremento condicional respeita o limite de 30. Com analista, não há limite:
+ * a trava é de custo da LLM. Se o condicional falhar (estado mudou), relê e reavalia uma vez.
+ */
 async function continueConversationTurn(
   client: TurnClient,
   ownerId: string,
   conversationId: string,
   content: string,
   now: Date,
-): Promise<TurnReservation> {
+): Promise<TurnStart> {
   const where = { id: conversationId, ownerId };
-  const select = { status: true, messageCount: true, lastMessageAt: true } as const;
+  const select = { status: true, messageCount: true, lastMessageAt: true, returnedToAgentAt: true } as const;
 
-  const current = await client.conversation.findFirst({ where, select });
-  assertAcceptsTurn(current);
-  if (!current) throw new ConversationNotFoundError();
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const current = await client.conversation.findFirst({ where, select });
+    if (!current) throw new ConversationNotFoundError();
+    if (current.status === "CLOSED") throw new ConversationClosedError();
 
-  // Condicional: é o que garante o limite e o estado mesmo sob concorrência.
-  const { count } = await client.conversation.updateMany({
-    where: { ...where, status: "WITH_AGENT", messageCount: { lt: CONVERSATION_MESSAGE_LIMIT } },
-    data: { messageCount: { increment: 1 }, lastMessageAt: now },
-  });
-  if (count === 0) {
-    assertAcceptsTurn(await client.conversation.findFirst({ where, select }));
-    throw new Error("Incremento condicional recusado sem impedimento conhecido");
+    if (current.status === "WITH_AGENT") {
+      assertAcceptsTurn(current);
+      const { count } = await client.conversation.updateMany({
+        where: { ...where, status: "WITH_AGENT", messageCount: { lt: CONVERSATION_MESSAGE_LIMIT } },
+        data: { messageCount: { increment: 1 }, lastMessageAt: now },
+      });
+      if (count === 0) continue;
+      const history = await readHistory(client, conversationId);
+      const message = toTimelineMessage(
+        await client.message.create({ data: employeeMessageData(conversationId, ownerId, content, now), select: timelineMessageSelect }),
+      );
+      const updated = await client.conversation.findFirstOrThrow({ where, select });
+      return {
+        kind: "AGENT_TURN",
+        reservation: {
+          conversationId,
+          isNew: false,
+          employeeMessageId: message.id,
+          employeeMessage: message,
+          messageCount: updated.messageCount,
+          status: updated.status,
+          previousLastMessageAt: current.lastMessageAt,
+          returnedToAgentAt: current.returnedToAgentAt,
+          history,
+        },
+      };
+    }
+
+    const { count } = await client.conversation.updateMany({
+      where: { ...where, status: { in: [...ANALYST_STATUSES] } },
+      data: { messageCount: { increment: 1 }, lastMessageAt: now },
+    });
+    if (count === 0) continue;
+    const message = toTimelineMessage(
+      await client.message.create({ data: employeeMessageData(conversationId, ownerId, content, now), select: timelineMessageSelect }),
+    );
+    return { kind: "STORED_FOR_ANALYST", employeeMessage: message, conversation: await readSnapshot(client, conversationId) };
   }
+  throw new Error("Mensagem do funcionário recusada duas vezes sem impedimento conhecido");
+}
 
-  const history = await readHistory(client, conversationId);
-  const message = await client.message.create({
-    data: { conversationId, authorType: "EMPLOYEE", authorId: ownerId, content, createdAt: now },
-    select: { id: true },
-  });
-  const updated = await client.conversation.findFirstOrThrow({ where, select });
-  return {
-    conversationId,
-    isNew: false,
-    employeeMessageId: message.id,
-    messageCount: updated.messageCount,
-    status: updated.status,
-    previousLastMessageAt: current.lastMessageAt,
-    history,
-  };
+/** A mensagem do agent como entra na linha do tempo (e no SSE). */
+function agentTimelineMessage(conversationId: string, message: StoredAgentMessage): TimelineMessage {
+  return { ...message, conversationId, authorType: "AGENT", author: null };
 }
 
 function toPendingDraft(proposal: ProposedTicketDraft, now: Date): ConfirmableDraft {
@@ -170,20 +215,47 @@ function toPendingDraft(proposal: ProposedTicketDraft, now: Date): ConfirmableDr
   return { ...base, kind: proposal.kind, ticketCode: proposal.ticket.code, content: proposal.content };
 }
 
-/** Transações curtas: nenhuma fica aberta durante a chamada da LLM, ou o SQLite bloquearia as escritas. */
-export function createConversationService(client: PrismaClient): ConversationService {
+/**
+ * Transações curtas: nenhuma fica aberta durante a chamada da LLM, ou o SQLite bloquearia as escritas.
+ * Cada operação publica o que criou só depois de `$transaction` resolver: transação desfeita não publica.
+ */
+export function createConversationService(
+  client: PrismaClient,
+  { publisher = noopPublisher }: { publisher?: ChangePublisher } = {},
+): ConversationService {
+  /** Sem mensagem criada (casos idempotentes), não há o que publicar. */
+  function publish(change: ConversationChange): void {
+    if (change.messages.length === 0) return;
+    try {
+      publisher.publish(change);
+    } catch (error) {
+      console.error("Falha ao publicar mudança de conversa:", describeErrorForLog(error));
+    }
+  }
+
+  function publishAttendance<T extends AttendanceResult>(result: T): T {
+    publish({ conversationId: result.snapshot.id, ownerId: result.snapshot.owner.id, messages: result.createdMessages, ticketsChanged: false });
+    return result;
+  }
+
   return {
-    startTurn(ownerId, { conversationId, content, now }) {
-      return client.$transaction((tx) =>
+    async startTurn(ownerId, { conversationId, content, now }) {
+      const start = await client.$transaction((tx) =>
         conversationId === undefined
           ? createConversationTurn(tx, ownerId, content, now)
           : continueConversationTurn(tx, ownerId, conversationId, content, now),
       );
+      // No caminho do agent, a mensagem do funcionário sai junto com a resposta: o abortTurn poderia apagá-la.
+      if (start.kind === "STORED_FOR_ANALYST") {
+        publish({ conversationId: start.conversation.id, ownerId, messages: [start.employeeMessage], ticketsChanged: false });
+      }
+      return start;
     },
 
-    completeTurn({ conversationId }, { content, trace, ticketDraft, handoff, now }) {
+    async completeTurn(reservation, { content, trace, ticketDraft, handoff, now }) {
+      const { conversationId } = reservation;
       const draft = ticketDraft && !handoff ? toPendingDraft(ticketDraft, now) : null;
-      return client.$transaction(async (tx) => {
+      const { ownerId, ...stored } = await client.$transaction(async (tx) => {
         const message = await tx.message.create({
           data: { conversationId, authorType: "AGENT", authorId: null, content, trace, createdAt: now },
           select: { id: true, createdAt: true },
@@ -194,22 +266,61 @@ export function createConversationService(client: PrismaClient): ConversationSer
           data: { lastMessageAt: now, ...(draft ? { pendingDraft: draft, pendingDraftId: draft.draftId } : {}) },
         });
         if (count === 0) throw new ConversationNotWithAgentError();
-        if (handoff) await transferToAnalyst(tx, { conversationId, reason: handoff.reason, summary: handoff.summary, at: now });
-        const { status } = await tx.conversation.findUniqueOrThrow({ where: { id: conversationId }, select: { status: true } });
-        return { id: message.id, content, trace, createdAt: message.createdAt, draftId: draft?.draftId ?? null, conversationStatus: status };
+        const systemMessages = handoff
+          ? [await transferToAnalyst(tx, { conversationId, reason: handoff.reason, summary: handoff.summary, at: now })]
+          : [];
+        const { status, ownerId } = await tx.conversation.findUniqueOrThrow({
+          where: { id: conversationId },
+          select: { status: true, ownerId: true },
+        });
+        return {
+          ownerId,
+          id: message.id,
+          content,
+          trace,
+          createdAt: message.createdAt,
+          draftId: draft?.draftId ?? null,
+          conversationStatus: status,
+          systemMessages,
+        };
       });
+      const messages = [reservation.employeeMessage, agentTimelineMessage(conversationId, stored), ...stored.systemMessages];
+      publish({ conversationId, ownerId, messages, ticketsChanged: false });
+      return stored;
     },
 
     readDraft(ownerId, draftId) {
       return readPendingDraft(client, ownerId, draftId);
     },
 
-    confirmDraft(ownerId, draftId, request, now) {
-      return client.$transaction((tx) => confirmPendingDraft(tx, { ownerId, draftId, request, now }));
+    async confirmDraft(ownerId, draftId, request, now) {
+      const confirmed = await client.$transaction((tx) => confirmPendingDraft(tx, { ownerId, draftId, request, now }));
+      const conversationId = confirmed.conversation.id;
+      const messages = [agentTimelineMessage(conversationId, confirmed.message), ...confirmed.systemMessages];
+      publish({ conversationId, ownerId, messages, ticketsChanged: true });
+      return confirmed;
     },
 
-    cancelDraft(ownerId, draftId, now) {
-      return client.$transaction((tx) => cancelPendingDraft(tx, { ownerId, draftId, now }));
+    async cancelDraft(ownerId, draftId, now) {
+      const { message, conversationId } = await client.$transaction((tx) => cancelPendingDraft(tx, { ownerId, draftId, now }));
+      publish({ conversationId, ownerId, messages: [agentTimelineMessage(conversationId, message)], ticketsChanged: false });
+      return { message };
+    },
+
+    async takeOver(conversationId, analyst, now) {
+      return publishAttendance(await client.$transaction((tx) => attendance.takeOver(tx, { conversationId, analyst, now })));
+    },
+
+    async replyAsAnalyst(conversationId, analyst, content, now) {
+      return publishAttendance(await client.$transaction((tx) => attendance.replyAsAnalyst(tx, { conversationId, analyst, content, now })));
+    },
+
+    async returnToAgent(conversationId, analyst, now) {
+      return publishAttendance(await client.$transaction((tx) => attendance.returnToAgent(tx, { conversationId, analyst, now })));
+    },
+
+    async closeAttendance(conversationId, analyst, now) {
+      return publishAttendance(await client.$transaction((tx) => attendance.closeAttendance(tx, { conversationId, analyst, now })));
     },
 
     async abortTurn(reservation) {

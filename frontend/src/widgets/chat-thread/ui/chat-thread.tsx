@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AgentMessage,
   AgentWaiting,
+  AnalystMessage,
   QuickReplies,
   SystemEvent,
   UserMessage,
@@ -26,7 +27,10 @@ const NEAR_BOTTOM_PX = 80;
 
 interface ChatThreadProps {
   items: ChatItem[];
+  /** Turno em andamento: nada mais é clicável. */
   isPending: boolean;
+  /** Turno com o agent: mostra "Analisando…". Com analista, só se espera a gravação. */
+  isAgentThinking: boolean;
   lockedOut: boolean;
   /** No limite de mensagens, o rascunho ainda pode ser confirmado. */
   draftsLocked: boolean;
@@ -66,6 +70,7 @@ function lookupAttachment(
 export function ChatThread({
   items,
   isPending,
+  isAgentThinking,
   lockedOut,
   draftsLocked,
   onRetry,
@@ -84,14 +89,14 @@ export function ChatThread({
   const [isSlow, setIsSlow] = useState(false);
 
   useEffect(() => {
-    if (!isPending) return;
+    if (!isAgentThinking) return;
 
     const timer = setTimeout(() => setIsSlow(true), SLOW_WAITING_AFTER_MS);
     return () => {
       clearTimeout(timer);
       setIsSlow(false);
     };
-  }, [isPending]);
+  }, [isAgentThinking]);
 
   useEffect(() => {
     const scroller = scrollRef.current;
@@ -115,7 +120,7 @@ export function ChatThread({
       top: scroller.scrollHeight,
       behavior: reduceMotion ? "auto" : "smooth",
     });
-  }, [items, isPending]);
+  }, [items, isAgentThinking]);
 
   const handleScroll = () => {
     const scroller = scrollRef.current;
@@ -187,9 +192,17 @@ export function ChatThread({
 
               if (item.kind === "event") {
                 return (
-                  <SystemEvent key={item.id} at={item.at} icon="transfer">
+                  <SystemEvent key={item.id} at={item.at} icon={item.icon}>
                     {item.text}
                   </SystemEvent>
+                );
+              }
+
+              if (item.kind === "analyst") {
+                return (
+                  <AnalystMessage key={item.id} authorName={item.authorName}>
+                    {item.content}
+                  </AnalystMessage>
                 );
               }
 
@@ -244,11 +257,13 @@ export function ChatThread({
               );
             })}
           </div>
-          {isPending ? <AgentWaiting>{waitingText}</AgentWaiting> : null}
+          {isAgentThinking ? (
+            <AgentWaiting>{waitingText}</AgentWaiting>
+          ) : null}
         </div>
       </div>
       <p role="status" className="sr-only">
-        {isPending ? waitingText : ""}
+        {isAgentThinking ? waitingText : ""}
       </p>
     </div>
   );

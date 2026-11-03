@@ -1,12 +1,17 @@
 import { CONVERSATION_MESSAGE_LIMIT, remainingMessages } from "../conversations/conversation-rules.js";
 import type { ConversationService, StoredAgentMessage, TurnReservation } from "../conversations/conversation-service.js";
+import type { ConversationQueries } from "../conversations/conversation-queries.js";
+import { toTimelineMessageView, type ConversationSnapshot, type TimelineMessage } from "../conversations/timeline.js";
 import { DraftKindMismatchError, TicketNotOpenError, TicketNotReopenableError } from "../conversations/ticket-draft.js";
 import {
   handoffProposalSchema,
   proposedAnyDraftSchema,
   quickRepliesSchema,
   type CancelDraftResponse,
+  type ChatConversationView,
+  type ChatConversationDetail,
   type ChatMessageView,
+  type EmployeeMessageView,
   type ChatRequest,
   type ChatResponse,
   type ConfirmDraftRequest,
@@ -38,12 +43,15 @@ export type ChatService = {
   sendMessage(actor: SessionUser, request: ChatRequest): Promise<ChatResponse>;
   confirmDraft(actor: SessionUser, draftId: string, request: ConfirmDraftRequest): Promise<ConfirmDraftResponse>;
   cancelDraft(actor: SessionUser, draftId: string): Promise<CancelDraftResponse>;
+  /** Conversa do próprio funcionário com todas as mensagens; alheia ou inexistente é 404. */
+  getConversation(actor: SessionUser, conversationId: string): Promise<ChatConversationDetail>;
 };
 
 type ChatServiceDeps = {
   conversations: ConversationService;
   agentRunner: AgentRunner;
   tickets: TicketCodeReader & ResolvedTicketReader & TicketAvailability;
+  queries: Pick<ConversationQueries, "ownedByEmployee">;
   now?: () => Date;
 };
 
@@ -103,11 +111,26 @@ function toMessageView(message: StoredAgentMessage): ChatMessageView {
   };
 }
 
+function toEmployeeMessageView(message: TimelineMessage): EmployeeMessageView {
+  return { id: message.id, authorType: "EMPLOYEE", content: message.content, createdAt: message.createdAt.toISOString() };
+}
+
+export function toConversationView(snapshot: Pick<ConversationSnapshot, "id" | "status" | "messageCount" | "analyst">): ChatConversationView {
+  return {
+    id: snapshot.id,
+    status: snapshot.status,
+    messageCount: snapshot.messageCount,
+    messageLimit: CONVERSATION_MESSAGE_LIMIT,
+    remainingMessages: remainingMessages(snapshot.messageCount),
+    analyst: snapshot.analyst,
+  };
+}
+
 function assertEmployee(actor: SessionUser): void {
   if (actor.role !== "EMPLOYEE") throw new EmployeeOnlyError();
 }
 
-export function createChatService({ conversations, agentRunner, tickets, now = () => new Date() }: ChatServiceDeps): ChatService {
+export function createChatService({ conversations, agentRunner, tickets, queries, now = () => new Date() }: ChatServiceDeps): ChatService {
   /** Falha aqui não pode esconder o erro do turno. */
   async function abort(reservation: TurnReservation): Promise<void> {
     try {
@@ -144,11 +167,22 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
     async sendMessage(actor, { message, conversationId }) {
       assertEmployee(actor);
 
-      const reservation = await conversations.startTurn(actor.id, {
+      const start = await conversations.startTurn(actor.id, {
         ...(conversationId === undefined ? {} : { conversationId }),
         content: message,
         now: now(),
       });
+      if (start.kind === "STORED_FOR_ANALYST") {
+        return {
+          conversation: toConversationView(start.conversation),
+          employeeMessage: toEmployeeMessageView(start.employeeMessage),
+          message: null,
+          ticketLookup: null,
+          ticketDraft: null,
+          quickReplies: null,
+        };
+      }
+      const { reservation } = start;
 
       try {
         // Fora de transação: a LLM é lenta e o SQLite bloquearia as escritas.
@@ -157,6 +191,7 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
           actor: { id: actor.id, name: actor.name },
           history: reservation.history,
           message,
+          returnedFromAnalyst: reservation.returnedToAgentAt !== null,
         });
         const trace = agentTraceSchema.safeParse(result.trace);
         if (!trace.success) throw new AgentUnavailableError();
@@ -197,7 +232,9 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
             messageCount: reservation.messageCount,
             messageLimit: CONVERSATION_MESSAGE_LIMIT,
             remainingMessages: remainingMessages(reservation.messageCount),
+            analyst: null,
           },
+          employeeMessage: toEmployeeMessageView(reservation.employeeMessage),
           message: toMessageView(stored),
           ticketLookup: result.ticketLookup,
           ticketDraft: ticketDraft && stored.draftId ? toDraftView(ticketDraft, stored.draftId, at) : null,
@@ -220,6 +257,12 @@ export function createChatService({ conversations, agentRunner, tickets, now = (
       } else if (!(await tickets.findOpenTicketByCode(actor.id, draft.ticketCode, now()))) throw new TicketNotOpenError();
       const { message, ticket, conversation } = await conversations.confirmDraft(actor.id, draftId, request, now());
       return { message: toMessageView(message), ticket, conversation };
+    },
+
+    async getConversation(actor, conversationId) {
+      assertEmployee(actor);
+      const { snapshot, messages } = await queries.ownedByEmployee(actor.id, conversationId);
+      return { conversation: toConversationView(snapshot), messages: messages.map(toTimelineMessageView) };
     },
 
     async cancelDraft(actor, draftId) {

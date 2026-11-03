@@ -8,6 +8,13 @@ const response = {
     messageCount: 1,
     messageLimit: 30,
     remainingMessages: 29,
+    analyst: null,
+  },
+  employeeMessage: {
+    id: "e1",
+    authorType: "EMPLOYEE",
+    content: "oi",
+    createdAt: "2026-10-16T17:19:59.000Z",
   },
   message: {
     id: "m1",

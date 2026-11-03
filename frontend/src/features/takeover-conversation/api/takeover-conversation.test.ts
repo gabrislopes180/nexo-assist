@@ -1,35 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildConsoleFixtures } from "@/shared/api/console-mock";
 import { takeoverConversation } from "./takeover-conversation";
 
-const viewer = { id: "a1", name: "Rafael Lima" };
+const conversation = {
+  id: "x/1",
+  status: "WITH_ANALYST",
+  owner: { id: "u1", name: "Ana Souza", department: null },
+  analyst: { id: "a1", name: "Rafael Lima" },
+  assignedToMe: true,
+  assignedAt: "2026-11-03T10:12:00.000Z",
+  handoffReason: "EMPLOYEE_REQUEST",
+  handoffSummary: null,
+  handoffAt: "2026-11-03T10:05:00.000Z",
+  lastMessageAt: "2026-11-03T10:12:00.000Z",
+  closedAt: null,
+  messageCount: 2,
+  messageLimit: 30,
+  lastMessage: null,
+  lastAgentConfidence: null,
+  ticketCode: null,
+};
 
 afterEach(() => {
-  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 describe("takeoverConversation", () => {
-  it("no mock, assume com o analista da sessão", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CONSOLE_API", "mock");
-    vi.useFakeTimers();
-    const pending = takeoverConversation({ conversationId: "mock-conv-carla", viewer });
-    await vi.runAllTimersAsync();
-
-    expect(await pending).toMatchObject({ status: "WITH_ANALYST", analyst: viewer });
-  });
-
-  it("no modo real, faz POST sem corpo", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CONSOLE_API", "real");
-    const conversation = buildConsoleFixtures(new Date(), "default").conversations[1];
+  it("faz POST sem corpo e devolve a conversa", async () => {
     const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ conversation }), { status: 200 }),
+      async () =>
+        new Response(JSON.stringify({ conversation }), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await takeoverConversation({ conversationId: "x/1", viewer });
+    const result = await takeoverConversation("x/1");
 
+    expect(result.assignedToMe).toBe(true);
     expect(fetchMock.mock.calls[0]).toMatchObject([
       "/api/console/conversations/x%2F1/takeover",
       { method: "POST", body: undefined },

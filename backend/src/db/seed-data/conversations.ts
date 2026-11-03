@@ -1,11 +1,18 @@
 import type { ConversationStatus, HandoffReason, MessageAuthorType } from "../../generated/prisma/enums.js";
 import type { AgentTrace } from "../../shared/transparency.js";
 import { C2_HANDOFF_SUMMARY, C3_HANDOFF_SUMMARY } from "./tickets.js";
+import { closeSystemMessage, RETURN_SYSTEM_MESSAGE, takeoverSystemMessage } from "../../conversations/attendance.js";
 import { HANDOFF_SYSTEM_MESSAGE } from "../../conversations/handoff.js";
 import { ago, formatLocalDateTime } from "./time.js";
-import type { UserKey } from "./users.js";
+import { USERS, type UserKey } from "./users.js";
 
-export type ConversationKey = "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7";
+export type ConversationKey = "C1" | "C2" | "C3" | "C4" | "C5" | "C6" | "C7" | "C8" | "C9";
+
+function nameOf(key: UserKey): string {
+  const user = USERS.find((candidate) => candidate.key === key);
+  if (!user) throw new Error(`Usuário ${key} ausente`);
+  return user.name;
+}
 
 /** Com 29 mensagens do funcionário: a próxima é a última aceita, e a seguinte é recusada. */
 export const NEAR_LIMIT_CONVERSATION_ID = "seed-conv-near-limit";
@@ -29,6 +36,10 @@ export type ConversationSeed = {
   handoffSummary?: string;
   handoffAt?: Date;
   closedAt?: Date;
+  /** Hora da SYSTEM de quem assumiu; mantida em CLOSED. */
+  assignedAt?: Date;
+  /** Hora da SYSTEM da devolução ao agent. */
+  returnedToAgentAt?: Date;
   /** Em ordem cronológica. createdAt, lastMessageAt e messageCount são derivados daqui. */
   messages: MessageSeed[];
 };
@@ -195,6 +206,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
       handoffReason: "EMPLOYEE_REQUEST",
       handoffSummary: C3_HANDOFF_SUMMARY,
       handoffAt: t({ hours: 2, minutes: 55 }),
+      assignedAt: t({ minutes: 40 }),
       messages: [
         {
           at: t({ hours: 3, minutes: 6 }),
@@ -255,7 +267,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           },
         },
         { at: t({ hours: 2, minutes: 55 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
-        { at: t({ minutes: 40 }), authorType: "SYSTEM", authorKey: null, content: "Bruno assumiu a conversa" },
+        { at: t({ minutes: 40 }), authorType: "SYSTEM", authorKey: null, content: takeoverSystemMessage(nameOf("bruno")) },
         {
           at: t({ minutes: 38 }),
           authorType: "ANALYST",
@@ -374,6 +386,89 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           },
         },
         { at: t({ minutes: 5 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+      ],
+    },
+    {
+      // Atendida pelo Bruno e devolvida: demonstra o agent retomando a mesma conversa.
+      key: "C8",
+      id: "seed-conv-returned",
+      ownerKey: "ana",
+      status: "WITH_AGENT",
+      returnedToAgentAt: t({ minutes: 54 }),
+      messages: [
+        {
+          at: t({ minutes: 70 }),
+          authorType: "EMPLOYEE",
+          authorKey: "ana",
+          content: "A impressora do 3º andar não imprime meus relatórios: fica em fila e nada sai. Pode chamar alguém do suporte?",
+        },
+        {
+          at: t({ minutes: 69, seconds: 1 }),
+          authorType: "AGENT",
+          authorKey: null,
+          content: "Claro, vou transferir a conversa para um analista com um resumo do que você contou.",
+          trace: {
+            understood: "A impressora do 3º andar não imprime e a funcionária pediu para falar com uma pessoa.",
+            intent: "TALK_TO_ANALYST",
+            actions: [{ tool: "transferToAnalyst", summary: "Transferiu a conversa (motivo: pedido do funcionário).", status: "SUCCESS" }],
+            confidence: "HIGH",
+            reason: "Pedido explícito para falar com uma pessoa.",
+          },
+        },
+        { at: t({ minutes: 69 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 60 }), authorType: "SYSTEM", authorKey: null, content: takeoverSystemMessage(nameOf("bruno")) },
+        {
+          at: t({ minutes: 58 }),
+          authorType: "ANALYST",
+          authorKey: "bruno",
+          content: "Oi, Ana! Reiniciei a fila de impressão do 3º andar. Pode tentar imprimir de novo?",
+        },
+        { at: t({ minutes: 55 }), authorType: "EMPLOYEE", authorKey: "ana", content: "Agora saiu, obrigada!" },
+        { at: t({ minutes: 54 }), authorType: "SYSTEM", authorKey: null, content: RETURN_SYSTEM_MESSAGE },
+      ],
+    },
+    {
+      // Encerrada pelo analista há 3 h: aparece na lista do console dentro da janela de 48 h.
+      key: "C9",
+      id: "seed-conv-closed-by-analyst",
+      ownerKey: "juliana",
+      status: "CLOSED",
+      analystKey: "rafael",
+      handoffReason: "EMPLOYEE_REQUEST",
+      handoffSummary: "Juliana precisa instalar um leitor de PDF e não tem permissão de administrador; pediu para falar com um analista.",
+      handoffAt: t({ hours: 3, minutes: 39 }),
+      assignedAt: t({ hours: 3, minutes: 30 }),
+      closedAt: t({ hours: 3 }),
+      messages: [
+        {
+          at: t({ hours: 3, minutes: 40 }),
+          authorType: "EMPLOYEE",
+          authorKey: "juliana",
+          content: "Preciso instalar um leitor de PDF, mas o computador pede senha de administrador. Pode chamar um analista?",
+        },
+        {
+          at: t({ hours: 3, minutes: 39, seconds: 1 }),
+          authorType: "AGENT",
+          authorKey: null,
+          content: "Tudo bem, vou transferir a conversa para um analista com um resumo do pedido.",
+          trace: {
+            understood: "A funcionária precisa instalar um programa sem permissão de administrador e pediu um analista.",
+            intent: "TALK_TO_ANALYST",
+            actions: [{ tool: "transferToAnalyst", summary: "Transferiu a conversa (motivo: pedido do funcionário).", status: "SUCCESS" }],
+            confidence: "HIGH",
+            reason: "Pedido explícito para falar com uma pessoa.",
+          },
+        },
+        { at: t({ hours: 3, minutes: 39 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ hours: 3, minutes: 30 }), authorType: "SYSTEM", authorKey: null, content: takeoverSystemMessage(nameOf("rafael")) },
+        {
+          at: t({ hours: 3, minutes: 28 }),
+          authorType: "ANALYST",
+          authorKey: "rafael",
+          content: "Oi, Juliana! Liberei o leitor de PDF no Portal de Software. Ele já aparece para você instalar por lá.",
+        },
+        { at: t({ hours: 3, minutes: 10 }), authorType: "EMPLOYEE", authorKey: "juliana", content: "Apareceu e já instalei. Obrigada!" },
+        { at: t({ hours: 3 }), authorType: "SYSTEM", authorKey: null, content: closeSystemMessage(nameOf("rafael")) },
       ],
     },
   ];

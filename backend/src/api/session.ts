@@ -45,8 +45,16 @@ export function requireSession(deps: AppDeps): RequestHandler {
       throw sessionInvalid();
     }
     res.locals.sessionUser = user;
+    res.locals.sessionExpiresAt = session?.expiresAt;
     next();
   };
+}
+
+/** Fim da validade do token da sessão, para o stream de eventos encerrar na hora certa. */
+export function sessionExpiresAtOf(res: Response): Date {
+  const expiresAt: unknown = res.locals.sessionExpiresAt;
+  if (!(expiresAt instanceof Date)) throw new Error("sessionExpiresAtOf chamado em rota sem requireSession");
+  return expiresAt;
 }
 
 /** Para rotas atrás de `requireSession`; sem o middleware é erro de programação. */

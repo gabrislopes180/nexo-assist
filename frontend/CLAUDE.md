@@ -89,12 +89,14 @@ Exceção: `processes/layouts` mantém `sidebar.tsx`, `authenticated-layout.tsx`
 | `entities/conversation` | Tipo da conversa e do estado (com o agent, aguardando, com analista), ConversationItem |
 | `entities/message` | Tipos de mensagem e registro de transparência, UserMessage, AgentMessage, ConsoleMessage, SystemEvent |
 | `entities/session` | Usuário logado |
-| `features/` | `send-message`, `confirm-ticket-draft`, `select-ticket`, `takeover-conversation`, `return-to-agent`, `close-conversation`, `login` |
+| `features/` | `send-message`, `confirm-ticket-draft`, `select-ticket`, `takeover-conversation`, `return-to-agent`, `reply-to-conversation`, `close-conversation`, `login` |
 | `widgets/` | `login-hero`, `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `console-rail` |
 | `processes/` | `layouts`: sidebar compartilhado e layout autenticado |
 | `pages/` | `login`, `employee-console`, `analyst-console`, `profile` |
 | `widgets/console-thread` | Conversa no console do analista, com a barra de atendimento |
-| `shared/api/console-mock` | **Provisório.** Mock do `/console` até o backend expor as rotas (`NEXT_PUBLIC_CONSOLE_API=real` desliga) |
+| `shared/api/event-stream` + `shared/lib/hooks/use-event-stream` | Núcleo do tempo real (SSE): ciclo de vida do `EventSource`, backoff, `lastEventId`; sem regra de negócio |
+| `pages/analyst-console/api/use-console-live-updates` | Tempo real do console: aplica os eventos do SSE no cache do TanStack Query (`lib/apply-console-event`), com polling de reserva |
+| `features/send-message/api/use-chat-stream` | Tempo real do chat do funcionário: despacha os eventos do SSE no `chatReducer` e ressincroniza pela `GET /chat/conversations/:id` |
 
 A tabela é um ponto de partida. Se algo não se encaixar, prefira a camada mais baixa que funcione e registre a decisão.
 

@@ -11,12 +11,14 @@ import { getDraftFailure } from "../lib/draft-error";
 import {
   chatReducer,
   createInitialChatState,
+  noticeFor,
   type ChatItem,
   type DraftAction,
 } from "../model/chat-reducer";
 import { CHAT_MESSAGE_MAX_LENGTH } from "../model/chat-schema";
 import { cancelDraft, confirmDraft } from "./draft-actions";
 import { sendChatMessage } from "./send-message";
+import { useChatStream } from "./use-chat-stream";
 
 type AgentItem = Extract<ChatItem, { kind: "agent" }>;
 
@@ -65,6 +67,23 @@ export function useChat() {
   };
 
   const isIdle = state.pendingItemId === null && state.draftOp === null;
+  const withAgent = state.status === null || state.status === "WITH_AGENT";
+
+  const stream = useChatStream({
+    conversationId: state.conversationId,
+    status: state.status,
+    dispatch,
+    generationRef,
+  });
+
+  /** Foi para a fila do analista sem o stream ao vivo: o marco não chegaria sozinho. */
+  const resyncIfHandedOff = (
+    conversation: { id: string; status: string } | undefined,
+  ) => {
+    if (conversation?.status === "WAITING_ANALYST" && !stream.isLive()) {
+      stream.resync(conversation.id);
+    }
+  };
 
   useLayoutEffect(() => {
     if (isIdle) isSendingRef.current = false;
@@ -96,13 +115,15 @@ export function useChat() {
     try {
       const result = await mutateAsync({ message, conversationId });
       if (generation !== generationRef.current) return;
-      dispatch({ type: "succeeded", id: nextId(), result });
+      dispatch({ type: "succeeded", result });
+      resyncIfHandedOff(result.conversation);
     } catch (error) {
       if (generation !== generationRef.current) return;
 
       const failure = getChatFailure(error);
       dispatch({ type: "failed", failure });
       expireSessionIf(failure.sessionExpired);
+      if (failure.resync) stream.resync(conversationId);
     }
   };
 
@@ -131,7 +152,8 @@ export function useChat() {
   /** A última resposta, se ainda aceita escolha (seletor ou resposta rápida). */
   const answerableItem = (agentItemId: string): AgentItem | null => {
     const lastItem = state.items.at(-1);
-    if (!canStart() || state.lock) return null;
+    // Com analista, seletor e respostas rápidas do agent não valem mais.
+    if (!canStart() || state.lock || !withAgent) return null;
     if (lastItem?.kind !== "agent" || lastItem.id !== agentItemId) return null;
     return lastItem;
   };
@@ -179,9 +201,10 @@ export function useChat() {
       const outcome = await mutateDraft(request);
       if (generation !== generationRef.current) return;
       if (outcome.action === "confirm") {
-        dispatch({ type: "draftConfirmed", id: nextId(), result: outcome.result });
+        dispatch({ type: "draftConfirmed", result: outcome.result });
+        resyncIfHandedOff(outcome.result.conversation);
       } else {
-        dispatch({ type: "draftCancelled", id: nextId(), result: outcome.result });
+        dispatch({ type: "draftCancelled", result: outcome.result });
       }
     } catch (error) {
       if (generation !== generationRef.current) return;
@@ -189,6 +212,7 @@ export function useChat() {
       const failure = getDraftFailure(error);
       dispatch({ type: "draftFailed", failure });
       expireSessionIf(failure.sessionExpired);
+      if (failure.resync) stream.resync();
     }
   };
 
@@ -220,6 +244,10 @@ export function useChat() {
   return {
     items: state.items,
     isPending: state.pendingItemId !== null,
+    /** "Analisando…" só quando quem responde é o agent. */
+    isAgentThinking: state.pendingItemId !== null && withAgent,
+    status: state.status,
+    notice: state.lock ? null : noticeFor(state),
     draftOp: state.draftOp,
     count: state.count,
     limit: state.limit,

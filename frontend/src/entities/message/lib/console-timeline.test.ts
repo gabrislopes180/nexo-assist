@@ -75,7 +75,7 @@ describe("buildConsoleTimeline", () => {
     ]);
   });
 
-  it("mostra SYSTEM como evento com hora, e ícone só na transferência", () => {
+  it("mostra SYSTEM como evento com hora, com ícone de transferência e de assumir", () => {
     const handoffAt = "2026-10-20T10:05:00.001Z";
     const items = build(
       [
@@ -91,13 +91,24 @@ describe("buildConsoleTimeline", () => {
     ).filter((i) => i.kind === "event");
     expect(items.map((i) => i.kind === "event" && i.icon)).toEqual([
       "transfer",
-      null,
+      "takeover",
     ]);
     expect(items[0]).toMatchObject({
       label: expect.stringMatching(
         /^Transferida para um analista · \d\d:\d\d$/,
       ),
     });
+  });
+
+  it("reconhece a transferência pelo texto mesmo sem handoffAt", () => {
+    const items = build([
+      msg("1", "SYSTEM", "2026-10-20T10:05:00.000Z", "Transferida para um analista"),
+      msg("2", "SYSTEM", "2026-10-20T10:06:00.000Z", "Conversa devolvida ao agent"),
+    ]).filter((i) => i.kind === "event");
+    expect(items.map((i) => i.kind === "event" && i.icon)).toEqual([
+      "transfer",
+      null,
+    ]);
   });
 
   it("ordena por data de forma estável", () => {

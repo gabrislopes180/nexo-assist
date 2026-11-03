@@ -11,3 +11,10 @@ export class ConversationNotWithAgentError extends Error {
     this.name = "ConversationNotWithAgentError";
   }
 }
+
+export class ConversationNotFoundError extends Error {
+  constructor() {
+    super("Conversa não encontrada");
+    this.name = "ConversationNotFoundError";
+  }
+}

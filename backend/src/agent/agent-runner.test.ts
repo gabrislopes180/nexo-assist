@@ -27,6 +27,7 @@ const NO_MATCH: TicketLookupResult = { outcome: "NO_MATCH", openTicketCount: 3, 
 
 const input = (message: string, overrides: Partial<AgentTurnInput> = {}): AgentTurnInput => ({
   conversationId: "c1",
+  returnedFromAnalyst: false,
   actor: { id: "marina-id", name: "Marina Costa" },
   history: [],
   message,
@@ -496,6 +497,29 @@ describe("decisões do agent (modelo fake)", () => {
       assert.equal(result.handoff?.reason, "LOW_CONFIDENCE");
     });
 
+    it("pedido explícito com LOW_CONFIDENCE do modelo: transfere registrando EMPLOYEE_REQUEST", async () => {
+      const { runner } = setup([transfer({ reason: "LOW_CONFIDENCE", summary: "Pediu para falar com um analista." }), say("Ok")]);
+      const result = await runner.runTurn(input("Quero falar com um analista"));
+      assert.deepEqual(result.handoff, { reason: "EMPLOYEE_REQUEST", summary: "Pediu para falar com um analista." });
+      assert.match(result.content, /Transferi a conversa/);
+      assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["transferToAnalyst", "SUCCESS"]]);
+      assert.equal(result.trace.intent, "TALK_TO_ANALYST");
+    });
+
+    it("pedido explícito com OVERDUE sem oferta: transfere registrando EMPLOYEE_REQUEST", async () => {
+      const { runner } = setup([transfer({ reason: "OVERDUE", summary: "Chamado vencido; pediu analista." }), say("Ok")]);
+      const result = await runner.runTurn(input("Meu chamado venceu, quero falar com um analista"));
+      assert.equal(result.handoff?.reason, "EMPLOYEE_REQUEST");
+      assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["transferToAnalyst", "SUCCESS"]]);
+    });
+
+    it("aceite da oferta escrito como pedido explícito: continua OVERDUE", async () => {
+      const { runner } = setup([transfer({ reason: "LOW_CONFIDENCE", summary: "INC-20311 vencido; aceitou." }), say("Ok")]);
+      const result = await runner.runTurn(input("Sim, quero falar com um analista", { history: offerHistory }));
+      assert.equal(result.handoff?.reason, "OVERDUE");
+      assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["transferToAnalyst", "SUCCESS"]]);
+    });
+
     it("resumo inválido ou com código inventado: não transfere", async () => {
       for (const summary of ["   ", "Fala do INC-99999."]) {
         const { runner } = setup([transfer({ reason: "EMPLOYEE_REQUEST", summary }), say("Transferi.")]);
@@ -659,6 +683,60 @@ describe("decisões do agent (modelo fake)", () => {
       const [call] = modelCalls;
       assert.ok(call);
       assert.match(promptText(call), /transferToAnalyst/);
+    });
+
+    describe("conversa devolvida por um analista", () => {
+      const returned = { returnedFromAnalyst: true } as const;
+      const analystHistory = [
+        { authorType: "EMPLOYEE" as const, content: "Minha impressora não imprime. Quero falar com um analista." },
+        { authorType: "AGENT" as const, content: "Transferi a conversa para um analista. Ele vai continuar o atendimento por aqui." },
+        { authorType: "ANALYST" as const, content: "Reiniciei o spooler e abri o INC-30500 para trocar o toner." },
+        { authorType: "EMPLOYEE" as const, content: "Obrigado!" },
+      ];
+
+      it("chamado vencido: não acrescenta a oferta de analista", async () => {
+        const { runner } = setup([{ kind: "tool", input: { code: "INC-20311" } }, { kind: "text", text: decisionJson("O chamado INC-20311 está aguardando analista e com prazo vencido.") }], {
+          tickets: () => Promise.resolve(OVERDUE_SINGLE),
+        });
+        const result = await runner.runTurn(input("Como está o INC-20311?", returned));
+        assert.ok(!result.content.includes("Quer que eu chame um analista?"));
+        assert.equal(overdueOfferCodeFrom([result.content]), null);
+        assert.equal(result.quickReplies, null);
+      });
+
+      it("LOW_CONFIDENCE: não transfere, e o trace diz por quê", async () => {
+        const { runner } = setup([transfer({ reason: "LOW_CONFIDENCE", summary: "Impressora ainda falha." }), say("Vamos ver juntos: a luz de erro da impressora está acesa?", "OTHER")]);
+        const result = await runner.runTurn(input("A impressora voltou a falhar", { ...returned, history: analystHistory }));
+        assert.equal(result.handoff, null);
+        assert.ok(!/^Transferi/.test(result.content));
+        const action = result.trace.actions.find((item) => item.tool === "transferToAnalyst");
+        assert.equal(action?.status, "SKIPPED");
+        assert.match(action?.summary ?? "", /devolvida por um analista/);
+      });
+
+      it("pedido explícito continua transferindo, e o resumo pode citar o código trazido pelo analista", async () => {
+        const { runner } = setup([transfer({ reason: "EMPLOYEE_REQUEST", summary: "Impressora segue falhando; o analista abriu o INC-30500." }), say("Ok")]);
+        const result = await runner.runTurn(input("Quero falar com um analista de novo", { ...returned, history: analystHistory }));
+        assert.equal(result.handoff?.reason, "EMPLOYEE_REQUEST");
+        assert.match(result.content, /Transferi a conversa/);
+      });
+
+      it("remove o prefixo [Analista] que o modelo copiar para a própria resposta", async () => {
+        const { runner } = setup([say("[Analista] De nada! Qualquer coisa, estou por aqui.", "OTHER")]);
+        const result = await runner.runTurn(input("Valeu", { ...returned, history: analystHistory }));
+        assert.equal(result.content, "De nada! Qualquer coisa, estou por aqui.");
+      });
+
+      it("instrução de retomada só entra na conversa devolvida", async () => {
+        const back = setup([say("Oi.", "OTHER")]);
+        await back.runner.runTurn(input("Oi", returned));
+        assert.ok(back.modelCalls[0]);
+        assert.match(promptText(back.modelCalls[0]), /devolvida a você/);
+        const fresh = setup([say("Oi.", "OTHER")]);
+        await fresh.runner.runTurn(input("Oi"));
+        assert.ok(fresh.modelCalls[0]);
+        assert.doesNotMatch(promptText(fresh.modelCalls[0]), /devolvida a você/);
+      });
     });
   });
 

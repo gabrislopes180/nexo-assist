@@ -18,7 +18,10 @@ export function createNexoAgent({ model, ticketService }: NexoAgentDeps) {
   const agent = new Agent({
     id: "nexo-assist",
     name: "Nexo Assist",
-    instructions: ({ requestContext }) => buildInstructions((requestContext as RequestContext<TurnContextValues>).get("actorName") ?? "funcionário"),
+    instructions: ({ requestContext }) => {
+      const context = requestContext as RequestContext<TurnContextValues>;
+      return buildInstructions(context.get("actorName") ?? "funcionário", context.get("returnedFromAnalyst") === true);
+    },
     model: instrumentModel(model),
     tools: {
       searchMyOpenTickets: createSearchMyOpenTicketsTool({ ticketService }),

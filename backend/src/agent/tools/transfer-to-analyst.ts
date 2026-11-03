@@ -14,7 +14,7 @@ export type TransferToAnalystInput = z.infer<typeof transferToAnalystInputSchema
 
 const transferToAnalystOutputSchema = z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("ACCEPTED") }),
-  z.strictObject({ outcome: z.literal("REJECTED"), problem: z.enum(["OVERDUE_NOT_ACCEPTED", "OFFER_DECLINED", "DECLINED", "NOT_REQUESTED", "UNKNOWN_TICKET_CODE", "UNAVAILABLE"]) }),
+  z.strictObject({ outcome: z.literal("REJECTED"), problem: z.enum(["OVERDUE_NOT_ACCEPTED", "OFFER_DECLINED", "DECLINED", "NOT_REQUESTED", "RETURNED_BY_ANALYST", "UNKNOWN_TICKET_CODE", "UNAVAILABLE"]) }),
 ]);
 
 export type TransferToAnalystOutput = z.infer<typeof transferToAnalystOutputSchema>;
@@ -43,18 +43,29 @@ function knownCodes(context: Context): Set<string> {
 type Rejection = Extract<HandoffExecution, { outcome: "REJECTED" }>;
 
 /** Qual motivo vale, ou por que não há transferência. Pedido, recusa e aceite vêm da mensagem, não do modelo. */
-function reasonFor(requested: TransferToAnalystInput["reason"], context: NonNullable<Context>): TransferToAnalystInput["reason"] | Rejection {
+function resolvedReason(requested: TransferToAnalystInput["reason"], context: NonNullable<Context>): TransferToAnalystInput["reason"] | Rejection {
   const message = context.get("message") ?? "";
   const offered = context.get("overdueOfferCode");
   const asked = asksForPerson(message);
   if (declinesPerson(message)) return { outcome: "REJECTED", problem: offered ? "OFFER_DECLINED" : "DECLINED" };
-  // Resposta à oferta de prazo vencido: só um aceite claro transfere, e sempre como OVERDUE.
+  // Resposta à oferta de prazo vencido: só um aceite claro transfere, e sempre como OVERDUE,
+  // mesmo escrito como pedido ("Falar com um analista" é a resposta rápida da própria oferta).
   if (offered) return acceptsOffer(message) ? "OVERDUE" : { outcome: "REJECTED", problem: "OVERDUE_NOT_ACCEPTED" };
-  // Depois de recusar a oferta, só um novo pedido explícito transfere.
-  if (context.get("offerDeclinedRecently") && !asked) return { outcome: "REJECTED", problem: "OFFER_DECLINED" };
+  // Pedido explícito sempre transfere e fica registrado como EMPLOYEE_REQUEST, qualquer que seja o motivo do modelo.
+  // Também vale depois de recusar a oferta: só um novo pedido explícito transfere.
+  if (asked) return "EMPLOYEE_REQUEST";
+  if (context.get("offerDeclinedRecently")) return { outcome: "REJECTED", problem: "OFFER_DECLINED" };
   if (requested === "OVERDUE") return { outcome: "REJECTED", problem: "OVERDUE_NOT_ACCEPTED" };
-  if (requested === "EMPLOYEE_REQUEST" && !asked) return { outcome: "REJECTED", problem: "NOT_REQUESTED" };
+  if (requested === "EMPLOYEE_REQUEST") return { outcome: "REJECTED", problem: "NOT_REQUESTED" };
   return requested;
+}
+
+/** Conversa devolvida por um analista: o agent não transfere por iniciativa própria pelo resto dela. */
+function reasonFor(requested: TransferToAnalystInput["reason"], context: NonNullable<Context>): TransferToAnalystInput["reason"] | Rejection {
+  const reason = resolvedReason(requested, context);
+  if (!context.get("returnedFromAnalyst") || typeof reason !== "string" || reason === "EMPLOYEE_REQUEST") return reason;
+  // Só sobra OVERDUE de uma oferta de antes da devolução (aqui a oferta é suprimida): com pedido explícito vira EMPLOYEE_REQUEST.
+  return asksForPerson(context.get("message") ?? "") ? "EMPLOYEE_REQUEST" : { outcome: "REJECTED", problem: "RETURNED_BY_ANALYST" };
 }
 
 function evaluate(input: TransferToAnalystInput, context: Context): HandoffExecution {
@@ -82,7 +93,7 @@ export function createTransferToAnalystTool() {
     description:
       "Transfere a conversa do usuário autenticado para um analista humano. " +
       "`reason`: EMPLOYEE_REQUEST se ele pediu para falar com analista; OVERDUE só se ele aceitou a sua oferta de chamar um analista por chamado vencido; " +
-      "LOW_CONFIDENCE se você não tem segurança para resolver. " +
+      "LOW_CONFIDENCE se você não tem segurança para resolver. Em conversa devolvida por um analista, só EMPLOYEE_REQUEST é aceito. " +
       "`summary`: para o analista, o que ele pediu, os chamados envolvidos (só códigos devolvidos pelas ferramentas) e o que já foi tentado, sem inventar fatos.",
     inputSchema: transferToAnalystInputSchema,
     outputSchema: transferToAnalystOutputSchema,

@@ -167,6 +167,14 @@ describe("knownCodesFrom", () => {
     ];
     assert.deepEqual(knownCodesFrom(history), ["INC-20311"]);
   });
+
+  it("conta códigos que o analista trouxe, com a mesma regra do agent", () => {
+    const history = [
+      { authorType: "EMPLOYEE", content: "Minha impressora não imprime, é o INC-1?" },
+      { authorType: "ANALYST", content: "Não é o INC-1: abri o INC-30500 para trocar o toner." },
+    ];
+    assert.deepEqual(knownCodesFrom(history), ["INC-30500"]);
+  });
 });
 
 describe("relatedCodeFrom", () => {
@@ -249,6 +257,15 @@ describe("actionsFrom", () => {
   it("fica vazio sem execução", () => {
     assert.deepEqual(actionsFrom([]), []);
   });
+
+  it("transferência recusada por conversa devolvida explica a política", () => {
+    const [action] = actionsFrom([], [], [{ outcome: "REJECTED", problem: "RETURNED_BY_ANALYST" }]);
+    assert.deepEqual(action, {
+      tool: "transferToAnalyst",
+      summary: "Conversa devolvida por um analista: só um pedido explícito transfere; a conversa continua com o agent.",
+      status: "SKIPPED",
+    });
+  });
 });
 
 describe("parseDecision", () => {
@@ -327,6 +344,18 @@ describe("composeReply", () => {
     assert.equal(reply?.trace.intent, "OTHER");
     assert.equal(reply?.trace.confidence, "LOW");
     assert.equal(agentTraceSchema.safeParse(reply?.trace).success, true);
+  });
+
+  it("remove o prefixo [Analista] copiado pelo modelo", () => {
+    for (const content of ["[Analista] De nada!", "  [analista]: De nada!", "[ Analista ]De nada!", "[Analista] [Analista] De nada!"]) {
+      assert.equal(compose({ decision: { ...decision, content, intent: "OTHER" } })?.content, "De nada!", content);
+    }
+    assert.equal(compose({ decision: null, fallbackText: "[Analista] De nada!" })?.content, "De nada!");
+    assert.equal(compose({ decision: { ...decision, content: "Como o [Analista] disse, reinicie.", intent: "OTHER" } })?.content, "Como o [Analista] disse, reinicie.");
+  });
+
+  it("só o prefixo [Analista], sem texto, não produz resposta", () => {
+    assert.equal(compose({ decision: { ...decision, content: "[Analista]", intent: "OTHER" } }), null);
   });
 
   it("texto vazio após a tool não produz resposta", () => {

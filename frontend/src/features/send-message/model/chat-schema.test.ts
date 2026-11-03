@@ -13,6 +13,13 @@ const response = {
     messageCount: 1,
     messageLimit: 30,
     remainingMessages: 29,
+    analyst: null,
+  },
+  employeeMessage: {
+    id: "e1",
+    authorType: "EMPLOYEE",
+    content: "Oi",
+    createdAt: "2026-10-16T17:19:59.000Z",
   },
   message: {
     id: "m1",
@@ -73,6 +80,33 @@ describe("parseChatMessage", () => {
 });
 
 describe("chatResponseSchema", () => {
+  it("traz a mensagem gravada do funcionário", () => {
+    expect(chatResponseSchema.parse(response).employeeMessage).toEqual(
+      response.employeeMessage,
+    );
+  });
+
+  it("aceita resposta sem mensagem do agent quando um analista atende", () => {
+    const parsed = chatResponseSchema.parse({
+      ...response,
+      conversation: {
+        ...response.conversation,
+        status: "WITH_ANALYST",
+        analyst: { id: "a1", name: "Rafael Lima" },
+      },
+      message: null,
+    });
+
+    expect(parsed.message).toBeNull();
+    expect(parsed.conversation.analyst?.name).toBe("Rafael Lima");
+  });
+
+  it("recusa resposta sem employeeMessage", () => {
+    const rest: Record<string, unknown> = { ...response };
+    delete rest.employeeMessage;
+    expect(chatResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
   it("aceita resposta sem consulta", () => {
     expect(chatResponseSchema.parse(response).ticketLookup).toBeNull();
   });
@@ -80,7 +114,7 @@ describe("chatResponseSchema", () => {
   it("descarta os campos do trace que a UI não consome", () => {
     const parsed = chatResponseSchema.parse(response);
 
-    expect(parsed.message.trace).toEqual({
+    expect(parsed.message?.trace).toEqual({
       actions: response.message.trace.actions,
     });
     expect(parsed.message).not.toHaveProperty("authorType");

@@ -7,8 +7,10 @@ import { createAuthService, type AuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
 import type { ChatService } from "../chat/chat-service.js";
 import { createTestDatabase } from "../db/test-database.js";
+import { createEventBus } from "../realtime/event-bus.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleService } from "./test-support.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const ALLOWED_ORIGIN = "http://localhost:3000";
@@ -23,10 +25,11 @@ const unusedChatService: ChatService = {
   sendMessage: () => Promise.reject(new Error("chat não usado nestes testes")),
   confirmDraft: () => Promise.reject(new Error("chat não usado nestes testes")),
   cancelDraft: () => Promise.reject(new Error("chat não usado nestes testes")),
+  getConversation: () => Promise.reject(new Error("chat não usado nestes testes")),
 };
 
-async function start(deps: Omit<AppDeps, "chatService">): Promise<string> {
-  const server = createApp({ ...deps, chatService: unusedChatService }).listen(0);
+async function start(deps: Omit<AppDeps, "chatService" | "consoleService" | "eventBus">): Promise<string> {
+  const server = createApp({ ...deps, chatService: unusedChatService, consoleService: unusedConsoleService, eventBus: createEventBus() }).listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   running.push(server);
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

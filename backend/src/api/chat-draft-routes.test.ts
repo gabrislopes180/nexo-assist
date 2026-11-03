@@ -3,10 +3,12 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../app.js";
+import { createEventBus } from "../realtime/event-bus.js";
 import { createAuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
 import { AgentUnavailableError, type AgentRunner, type AgentTurnResult } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
+import { createConversationQueries } from "../conversations/conversation-queries.js";
 import { createConversationService } from "../conversations/conversation-service.js";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
@@ -14,6 +16,10 @@ import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft, TicketSum
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService, TicketServiceUnavailableError, type ResolvedTicketReader, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleService } from "./test-support.js";
+
+/** Turno com o agent: a resposta do agent está sempre presente. */
+type AgentChatResponse = ChatResponse & { message: NonNullable<ChatResponse["message"]> };
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -54,7 +60,7 @@ describe("rotas de rascunho do chat", () => {
 
   async function createDraft() {
     respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: proposal() });
-    const body = (await (await post("/chat", { message: "complementa" })).json()) as ChatResponse;
+    const body = (await (await post("/chat", { message: "complementa" })).json()) as AgentChatResponse;
     assert.ok(body.ticketDraft);
     llmCalls = 0;
     return { conversationId: body.conversation.id, draftId: body.ticketDraft.id };
@@ -99,8 +105,8 @@ describe("rotas de rascunho do chat", () => {
         return respond();
       },
     };
-    const chatService = createChatService({ conversations: createConversationService(client), agentRunner, tickets });
-    server = createApp({ config, authService: createAuthService(client), chatService }).listen(0);
+    const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets });
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -122,7 +128,7 @@ describe("rotas de rascunho do chat", () => {
   describe("POST /chat", () => {
     it("devolve ticketDraft com id gerado no backend", async () => {
       respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: proposal() });
-      const body = (await (await post("/chat", { message: "complementa" })).json()) as ChatResponse;
+      const body = (await (await post("/chat", { message: "complementa" })).json()) as AgentChatResponse;
       assert.ok(body.ticketDraft?.id);
       assert.deepEqual(body.ticketDraft, { id: body.ticketDraft.id, ...proposal() });
     });
@@ -130,7 +136,7 @@ describe("rotas de rascunho do chat", () => {
     it("usa o resumo do serviço, não o da proposta, e grava o código canônico", async () => {
       const tampered = { ...proposal(), ticket: { ...summary, code: CODE.toLowerCase(), title: "Título inventado" } };
       respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: tampered });
-      const body = (await (await post("/chat", { message: "complementa" })).json()) as ChatResponse;
+      const body = (await (await post("/chat", { message: "complementa" })).json()) as AgentChatResponse;
       assert.deepEqual(body.ticketDraft?.kind === "COMPLEMENT" && body.ticketDraft.ticket, summary);
       assert.ok(body.ticketDraft);
       assert.equal((await confirm(body.ticketDraft.id)).status, 200);
@@ -141,7 +147,7 @@ describe("rotas de rascunho do chat", () => {
       respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: foreign });
       const res = await post("/chat", { message: "complementa" });
       assert.equal(res.status, 200);
-      const body = (await res.json()) as ChatResponse;
+      const body = (await res.json()) as AgentChatResponse;
       assert.equal(body.ticketDraft, null);
       assert.equal(await client.conversation.count({ where: { pendingDraftId: { not: null } } }), 0);
       assert.doesNotMatch(body.message.content, /Confirma/);
@@ -157,7 +163,7 @@ describe("rotas de rascunho do chat", () => {
       respond = () => Promise.resolve({ content: "Confirma?", trace: TRACE, ticketLookup: null, ticketDraft: proposal() });
       const res = await post("/chat", { message: "complementa" });
       assert.equal(res.status, 200);
-      const body = (await res.json()) as ChatResponse;
+      const body = (await res.json()) as AgentChatResponse;
       assert.equal(body.ticketDraft, null);
       assert.doesNotMatch(body.message.content, /Confirma/);
       assert.match(body.message.content, /tente novamente/i);
@@ -166,7 +172,7 @@ describe("rotas de rascunho do chat", () => {
 
     it("devolve ticketDraft null sem rascunho no turno", async () => {
       respond = () => Promise.resolve({ content: "Oi", trace: TRACE, ticketLookup: null });
-      assert.equal(((await (await post("/chat", { message: "oi" })).json()) as ChatResponse).ticketDraft, null);
+      assert.equal(((await (await post("/chat", { message: "oi" })).json()) as AgentChatResponse).ticketDraft, null);
     });
 
     it("com a LLM falhando não deixa rascunho", async () => {

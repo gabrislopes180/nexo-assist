@@ -11,12 +11,14 @@ import {
 } from "@/entities/conversation";
 import { useAuthenticatedUser } from "@/entities/session";
 import { useMediaQuery } from "@/shared/lib/hooks/use-media-query";
+import { useNow } from "@/shared/lib/hooks/use-now";
 import { cn } from "@/shared/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/shared/ui/sheet";
 import { ConsoleRail } from "@/widgets/console-rail";
 import { ConsoleThread } from "@/widgets/console-thread";
 import { ConversationList } from "@/widgets/conversation-list";
 import { TicketPanel } from "@/widgets/ticket-panel";
+import { useConsoleLiveUpdates } from "../api/use-console-live-updates";
 import {
   parseConversationParam,
   resolveSelectedConversationId,
@@ -33,13 +35,14 @@ export function AnalystConsole() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const isLg = useMediaQuery("(min-width: 64rem)");
   const isXl = useMediaQuery("(min-width: 80rem)");
+  useConsoleLiveUpdates();
+  // Horários relativos ("há 5 min") andam sozinhos, sem depender de refetch.
+  const now = useNow(30_000);
 
   const list = useConsoleConversations();
   const all = list.data ?? [];
   const visible = visibleConversations(all, filter, search);
   const counts = filterCounts(all);
-  // Recalculado a cada render; o polling da lista refaz "agora" a cada 15 s.
-  const now = new Date();
 
   const selectedId = resolveSelectedConversationId({
     param: parseConversationParam(searchParams?.get("conversation") ?? null),
@@ -48,7 +51,7 @@ export function AnalystConsole() {
   });
   const selected = useConsoleConversation(selectedId);
 
-  // Mantém os outros parâmetros (como ?mock=) ao trocar a conversa.
+  // Mantém os outros parâmetros da URL ao trocar a conversa.
   const urlWith = (conversation: string | null) => {
     const params = new URLSearchParams(searchParams?.toString());
     if (conversation) params.set("conversation", conversation);

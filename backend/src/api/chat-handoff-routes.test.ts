@@ -3,10 +3,12 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../app.js";
+import { createEventBus } from "../realtime/event-bus.js";
 import { createAuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
 import type { AgentRunner, AgentTurnResult } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
+import { createConversationQueries } from "../conversations/conversation-queries.js";
 import { createConversationService } from "../conversations/conversation-service.js";
 import { HANDOFF_SYSTEM_MESSAGE } from "../conversations/handoff.js";
 import { createTestDatabase } from "../db/test-database.js";
@@ -15,6 +17,10 @@ import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft } from "..
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleService } from "./test-support.js";
+
+/** Turno com o agent: a resposta do agent está sempre presente. */
+type AgentChatResponse = ChatResponse & { message: NonNullable<ChatResponse["message"]> };
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -51,7 +57,7 @@ describe("transferência para analista pelo chat", () => {
     respond = () => Promise.resolve({ content: "Resposta do agent.", trace: TRACE, ticketLookup: null, ...result });
     const res = await post("/chat", { message: "mensagem", ...(conversationId ? { conversationId } : {}) });
     assert.equal(res.status, 200);
-    return (await res.json()) as ChatResponse;
+    return (await res.json()) as AgentChatResponse;
   }
 
   async function confirmCreation(priority: "CRITICAL" | "HIGH") {
@@ -73,8 +79,8 @@ describe("transferência para analista pelo chat", () => {
     const employee = await client.user.create({ data: { name: "Pessoa", email: "pessoa@teste.example", role: "EMPLOYEE" } });
     cookie = `nexo_session=${await issueSessionToken({ userId: employee.id, secret: SECRET, now: new Date() })}`;
     const agentRunner: AgentRunner = { runTurn: () => respond() };
-    const chatService = createChatService({ conversations: createConversationService(client), agentRunner, tickets: createTicketService(client) });
-    server = createApp({ config, authService: createAuthService(client), chatService }).listen(0);
+    const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets: createTicketService(client) });
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -132,11 +138,14 @@ describe("transferência para analista pelo chat", () => {
       assert.equal(body.ticketDraft, null);
     });
 
-    it("depois da transferência, nova mensagem responde 409 CONVERSATION_NOT_WITH_AGENT", async () => {
+    it("depois da transferência, nova mensagem é gravada para o analista, sem LLM", async () => {
       const body = await chat({ handoff: { reason: "OVERDUE", summary: "Chamado INC-1 vencido; aceitou falar com analista." } });
+      respond = () => Promise.reject(new Error("a LLM não deveria ser chamada"));
       const res = await post("/chat", { message: "e aí?", conversationId: body.conversation.id });
-      assert.equal(res.status, 409);
-      assert.equal(((await res.json()) as { error: { code: string } }).error.code, "CONVERSATION_NOT_WITH_AGENT");
+      assert.equal(res.status, 200);
+      const next = (await res.json()) as AgentChatResponse;
+      assert.equal(next.message, null);
+      assert.equal(next.conversation.status, "WAITING_ANALYST");
     });
 
     const invalid: [string, unknown][] = [

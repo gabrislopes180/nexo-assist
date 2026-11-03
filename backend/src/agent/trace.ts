@@ -371,6 +371,7 @@ const HANDOFF_REJECTION_REASON: Record<Extract<HandoffExecution, { outcome: "REJ
   OFFER_DECLINED: "O usuário recusou a oferta de analista; a conversa continua com o agent.",
   DECLINED: "O usuário disse que não quer falar com analista; a conversa continua com o agent.",
   NOT_REQUESTED: "Transferência recusada: o usuário não pediu analista; a conversa continua com o agent.",
+  RETURNED_BY_ANALYST: "Conversa devolvida por um analista: só um pedido explícito transfere; a conversa continua com o agent.",
   UNKNOWN_TICKET_CODE: "Resumo citou chamado não devolvido pelas ferramentas; a conversa continua com o agent.",
   UNAVAILABLE: "Transferência inválida; a conversa continua com o agent.",
 };
@@ -383,7 +384,7 @@ export function overdueOfferText(code: string, alreadyCited = false): string {
   return alreadyCited ? OVERDUE_QUESTION : `O prazo do ${code} venceu. ${OVERDUE_QUESTION}`;
 }
 
-/** Códigos que o agent trouxe na conversa. Um código que o usuário escreveu antes e o agent só repetiu não conta. */
+/** Códigos que o agent ou o analista trouxeram na conversa. Um código que o usuário escreveu antes e eles só repetiram não conta. */
 export function knownCodesFrom(history: readonly { authorType: string; content: string }[]): string[] {
   const fromEmployee = new Set<string>();
   const known = new Set<string>();
@@ -391,7 +392,7 @@ export function knownCodesFrom(history: readonly { authorType: string; content: 
     for (const code of ticketCodesIn(content)) {
       if (authorType === "EMPLOYEE") {
         if (!known.has(code)) fromEmployee.add(code);
-      } else if (authorType === "AGENT" && !fromEmployee.has(code)) {
+      } else if ((authorType === "AGENT" || authorType === "ANALYST") && !fromEmployee.has(code)) {
         known.add(code);
       }
     }
@@ -430,6 +431,13 @@ export function offerDeclinedIn(history: readonly { authorType: string; content:
     declinesPerson(answer.content) &&
     reply?.authorType === "AGENT"
   );
+}
+
+/** O histórico mostra o analista como "[Analista] ...": o modelo às vezes copia o prefixo e fala como se fosse ele. */
+const ANALYST_PREFIX = /^(?:\s*\[\s*analista\s*\]\s*:?\s*)+/i;
+
+function withoutAnalystPrefix(text: string): string {
+  return text.replace(ANALYST_PREFIX, "").trim();
 }
 
 /** Null: não há resposta aproveitável, e o runner trata como agent indisponível. */
@@ -490,7 +498,7 @@ export function composeReply({ message, decision, fallbackText, executions, draf
     return { content, trace: { ...trace, confidence: "LOW", reason }, ticketLookup, ticketDraft: null };
   }
 
-  const raw = decision ? decision.content.trim() : fallbackText.trim();
+  const raw = withoutAnalystPrefix(decision ? decision.content : fallbackText);
   // Transferência recusada fica só no trace; a resposta do turno segue. Sem resposta, explica que não transferiu.
   if (raw === "") {
     if (lastHandoff?.outcome !== "REJECTED") return null;

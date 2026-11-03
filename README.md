@@ -50,10 +50,11 @@ flowchart LR
   agent -- "7. registra" --> trace -- "8. salva mensagem + registro" --> conv
   agent -. "histórico" .-> mem
   knowledge & ticket & conv --> prisma --> sqlite
-  chatRoute -- "9. stream: ações + resposta" --> chat
+  chatRoute -- "9. JSON: ações + resposta" --> chat
 
   gate -. "com analista: salva sem chamar o LLM" .-> conv
   console -.-> consoleRoute -.-> conv
+  conv -. "10. eventos SSE, depois do commit" .-> chat & console
 ```
 
 A versão completa e editável está em [`docs/architecture/system-design.drawio`](docs/architecture/system-design.drawio) (abre no [draw.io](https://app.diagrams.net)).
@@ -84,6 +85,9 @@ nexo-assist/
     ├── api/           Rotas Express (sessão, chat, console)
     ├── auth/          Login simulado e token de sessão
     ├── agent/         Agent Mastra, tools e instruções
+    ├── conversations/ Estados da conversa, transferência e atendimento do analista
+    ├── console/       Serviço do console do analista
+    ├── realtime/      Barramento de eventos e streams SSE
     ├── tickets/       Serviço de chamados simulado
     ├── knowledge/     Central de ajuda
     ├── db/            Conexão e seed (schema e migrations em backend/prisma)
@@ -128,7 +132,7 @@ Outros comandos úteis (em `backend/`):
 | `npm run db:reset` | Apaga o banco e recria do zero |
 | `npm run db:studio` | Abre o Prisma Studio |
 
-Usuários de demonstração (login simulado, sem senha): `marina.costa@nexo.example`, `rafael.lima@nexo.example` e `juliana.alves@nexo.example` (funcionários); `ana.souza@nexo.example` e `bruno.martins@nexo.example` (analistas).
+Usuários de demonstração (login simulado, sem senha): `marina.costa@nexo.example`, `juliana.alves@nexo.example` e `ana.souza@nexo.example` (funcionários); `rafael.lima@nexo.example` e `bruno.martins@nexo.example` (analistas).
 
 ## Autenticação
 
@@ -154,18 +158,24 @@ Sem `conversationId` cria uma conversa; com ele, continua. `message` tem de 1 a 
 
 | Código | `error.code` | Quando |
 |---|---|---|
-| `200` | | `{ conversation, message, ticketLookup }` |
+| `200` | | `{ conversation, employeeMessage, message, ticketLookup, ticketDraft, quickReplies }` |
 | `400` | `INVALID_REQUEST` | Body inválido |
 | `401` | `SESSION_MISSING`, `SESSION_INVALID` | Sem sessão válida |
 | `403` | `FORBIDDEN` | Usuário não é funcionário |
 | `404` | `CONVERSATION_NOT_FOUND` | Conversa inexistente ou de outro dono |
 | `409` | `CONVERSATION_MESSAGE_LIMIT_REACHED` | Conversa já tem 30 mensagens do funcionário; nada é gravado |
 | `409` | `CONVERSATION_CLOSED` | Conversa encerrada |
-| `409` | `CONVERSATION_NOT_WITH_AGENT` | Conversa transferida para um analista |
 | `503` | `AGENT_UNAVAILABLE` | Falha da LLM; o turno é desfeito |
 | `500` | `INTERNAL_ERROR` | Erro inesperado; o turno é desfeito |
 
-O envelope traz também `quickReplies`: atalhos de resposta, ou `null`.
+O envelope:
+
+- `conversation`: `{ id, status, messageCount, messageLimit, remainingMessages, analyst }`. `analyst` é `{ id, name }` ou `null`, e `remainingMessages` é a cota com o agent.
+- `employeeMessage`: a mensagem gravada do funcionário (`{ id, authorType: "EMPLOYEE", content, createdAt }`). O `id` substitui o do item otimista e deduplica com o tempo real.
+- `message`: a resposta do agent, ou `null` quando a conversa está com analista.
+- `ticketLookup`, `ticketDraft` e `quickReplies`: `null` quando a conversa está com analista. `quickReplies` traz atalhos de resposta.
+
+`GET /chat/conversations/:id` devolve `{ conversation, messages }` com todas as mensagens em ordem cronológica, inclusive `ANALYST` (com `author`) e `SYSTEM`. O `trace` vem só nas do `AGENT`. A rota aceita só o dono, com papel `EMPLOYEE`. Conversa de outra pessoa responde `404 CONVERSATION_NOT_FOUND`, igual a inexistente, e um analista recebe `403 FORBIDDEN`. Serve para ressincronizar depois de um `sync RESYNC` e como polling de reserva.
 
 ### Transferência para analista
 
@@ -174,9 +184,13 @@ A conversa vai para a fila dos analistas (`status: WAITING_ANALYST`) em dois cas
 - **O agent decide transferir:** pedido do funcionário, chamado vencido aceito pela pessoa, ou baixa confiança. A transferência acontece junto com a resposta do agent.
 - **Confirmação de chamado com prioridade final `CRITICAL`:** a transferência é automática, com um resumo montado pelo backend.
 
-Em qualquer caso, o rascunho pendente é descartado e a conversa ganha a mensagem `SYSTEM` "Transferida para um analista". O `conversation.status` de `POST /chat` e da confirmação reflete o estado depois da operação. A mensagem `SYSTEM` não vem nessas respostas: quando `status` chega como `WAITING_ANALYST`, o frontend mostra o aviso e trava o composer; o histórico salvo já a contém.
+Em qualquer caso, o rascunho pendente é descartado e a conversa ganha a mensagem `SYSTEM` "Transferida para um analista". O `conversation.status` de `POST /chat` e da confirmação reflete o estado depois da operação. A mensagem `SYSTEM` não vem nessas respostas: ela chega pelo tempo real (`message.created`) e já está no histórico de `GET /chat/conversations/:id`. Quando `status` chega como `WAITING_ANALYST`, o frontend mostra um aviso, sem travar o composer.
 
-Enquanto a conversa está com analista (`WAITING_ANALYST` ou `WITH_ANALYST`), `POST /chat` responde `409 CONVERSATION_NOT_WITH_AGENT`. As mensagens do funcionário durante a espera ficam para a etapa do console.
+Enquanto a conversa está com analista (`WAITING_ANALYST` ou `WITH_ANALYST`), `POST /chat` com o `conversationId` só grava a mensagem do funcionário, sem chamar o LLM, e responde `200` com `message: null`.
+
+- **Limite:** a mensagem conta em `messageCount`, mas o limite de 30 só bloqueia turnos com o agent. Com o analista, ela é aceita mesmo acima de 30.
+- **Volta ao agent:** depois que o analista devolve a conversa, o próximo `POST /chat` volta a ir ao agent. Se a conversa voltou com 30 mensagens ou mais, ele recebe `409 CONVERSATION_MESSAGE_LIMIT_REACHED` e o funcionário abre outra conversa.
+- **Encerrada pelo analista:** `POST /chat` responde `409 CONVERSATION_CLOSED`.
 
 ### Rascunhos: complementar e abrir chamado
 
@@ -225,7 +239,105 @@ As duas rotas exigem sessão de funcionário, não chamam o modelo e não contam
 
 `ticketLookup` vem do serviço de chamados, nunca do texto do modelo, e é `null` quando nenhuma consulta rodou. A consulta só enxerga chamados abertos do dono da sessão.
 
-O seed traz conversas com ids fixos para demonstração: `seed-conv-closed` e `seed-conv-near-limit` (Marina) e `seed-conv-waiting` (Juliana). A `seed-conv-near-limit` tem 29 mensagens: a próxima é aceita e a seguinte recebe o `409`.
+O seed traz conversas com ids fixos para demonstração:
+
+| Id | Dono | Estado |
+|---|---|---|
+| `seed-conv-closed` | Marina | Encerrada, sem analista |
+| `seed-conv-near-limit` | Marina | Com o agent, com 29 mensagens: a próxima é aceita e a seguinte recebe o `409` |
+| `seed-conv-waiting` | Juliana | Esperando analista (chamado crítico) |
+| `seed-conv-request` | Ana | Esperando analista (pedido da pessoa) |
+| `seed-conv-low-confidence` | Juliana | Esperando analista (baixa confiança) |
+| `seed-conv-overdue` | Marina | Esperando analista (chamado vencido, `ticketCode` INC-20311) |
+| `seed-conv-returned` | Ana | Atendida pelo Bruno e devolvida ao agent |
+| `seed-conv-closed-by-analyst` | Juliana | Encerrada pelo Rafael há 3 h |
+
+Há ainda uma conversa sem id fixo atendida pelo Bruno (`WITH_ANALYST`). O dono dela é o Rafael, que é analista, então ela só serve para o console.
+
+## Console do analista
+
+Rotas em `/console`, só para usuários com papel `ANALYST`. Quem não é analista recebe `403 FORBIDDEN`. Qualquer analista lê qualquer conversa, porque a fila é compartilhada. O analista de cada ação vem sempre da sessão.
+
+| Rota | Body | Resposta de sucesso |
+|---|---|---|
+| `GET /console/conversations` | query `filter` (`all`, `waiting`, `with-agent`, `mine`) e `q` (opcionais) | `{ conversations }` |
+| `GET /console/conversations/:id` | | `{ conversation }` |
+| `GET /console/conversations/:id/messages` | | `{ messages }`, todas, em ordem cronológica |
+| `GET /console/conversations/:id/tickets` | | `{ conversationTicket, otherTickets }` |
+| `POST /console/conversations/:id/takeover` | vazio ou `{}` | `{ conversation }` |
+| `POST /console/conversations/:id/messages` | `{ "content": "1 a 2000 caracteres" }` | `{ message, conversation }` |
+| `POST /console/conversations/:id/return` | vazio ou `{}` | `{ conversation }` |
+| `POST /console/conversations/:id/close` | vazio ou `{}` | `{ conversation }` |
+
+**Conversa no console:**
+
+- Campos: `id`, `status`, `owner` (com `department`), `analyst`, `assignedToMe`, `assignedAt`, `handoffReason`, `handoffSummary`, `handoffAt`, `lastMessageAt`, `closedAt`, `messageCount`, `messageLimit`, `lastMessage` (a última que não é `SYSTEM`), `lastAgentConfidence` e `ticketCode`.
+- `assignedToMe` é calculado para o analista da sessão.
+
+**Lista:**
+
+- Traz as conversas não encerradas e as encerradas nas últimas 48 h, por `lastMessageAt` decrescente, até 200.
+- `q` busca no nome do dono e no `ticketCode`, sem diferenciar acento nem caixa.
+
+**`ticketCode`:**
+
+1. É o chamado do evento mais recente ligado à conversa.
+2. Sem evento, vale o primeiro código `INC-`/`REQ-` do resumo da transferência que seja de um chamado do mesmo dono.
+3. Senão, `null`.
+
+**Chamados:** `conversationTicket` é o chamado de `ticketCode`, e `otherTickets` traz os demais do dono: abertos primeiro, depois os resolvidos. Só essa rota depende do serviço de chamados. Com ele fora do ar, ela responde `503` e a lista continua respondendo.
+
+**Ações:**
+
+| Ação | Vale em | Efeito | Mensagem `SYSTEM` |
+|---|---|---|---|
+| Assumir | `WAITING_ANALYST` | Vai para `WITH_ANALYST` com o analista da sessão | "`<Primeiro nome>` assumiu a conversa" |
+| Responder | `WITH_ANALYST`, assumida por mim | Grava a mensagem `ANALYST` | |
+| Devolver | `WAITING_ANALYST`, ou `WITH_ANALYST` assumida por mim | Volta a `WITH_AGENT` e limpa analista e transferência | "Conversa devolvida ao agent" |
+| Encerrar | `WITH_ANALYST`, assumida por mim | Vai para `CLOSED`; o chamado não muda, e analista e transferência ficam como registro | "`<Primeiro nome>` encerrou o atendimento" |
+
+**Concorrência e idempotência:**
+
+- Cada ação é uma transação condicional ao estado esperado.
+- Se dois analistas assumem ao mesmo tempo, um vence e o outro recebe `409 CONVERSATION_NOT_WAITING`.
+- Assumir de novo (duplo clique) ou encerrar de novo pelo mesmo analista responde `200` com o estado atual, sem nova mensagem.
+- Devolver não é idempotente: a segunda chamada encontra `WITH_AGENT` e recebe `409`.
+
+| Código | `error.code` | Quando |
+|---|---|---|
+| `400` | `INVALID_REQUEST` | Query ou body inválido, ou campo extra |
+| `401` | `SESSION_MISSING`, `SESSION_INVALID` | Sem sessão válida |
+| `403` | `FORBIDDEN` | Usuário não é analista |
+| `404` | `CONVERSATION_NOT_FOUND` | Conversa inexistente |
+| `409` | `CONVERSATION_NOT_WAITING` | Assumir ou devolver uma conversa que já não está esperando, ou que é de outro analista |
+| `409` | `CONVERSATION_NOT_ASSIGNED` | Responder ou encerrar sem ter assumido |
+| `503` | `TICKET_SERVICE_UNAVAILABLE` | Só em `/tickets` |
+| `500` | `INTERNAL_ERROR` | Erro inesperado; nada é gravado |
+
+## Tempo real
+
+Dois streams SSE, um por papel. O envio continua pelos `POST`.
+
+| Rota | Quem | Recebe |
+|---|---|---|
+| `GET /chat/events` | `EMPLOYEE` | Eventos das próprias conversas |
+| `GET /console/events` | `ANALYST` | Eventos de todas as conversas |
+
+Antes de o stream abrir, os erros saem em JSON: `401`, `403` e `429 TOO_MANY_STREAMS`, quando o mesmo usuário já tem 5 streams abertos.
+
+| Evento | `data` |
+|---|---|
+| `sync` | `{ mode: "REPLAY" \| "RESYNC" }`. É sempre o primeiro evento |
+| `message.created` | `{ conversationId, message }`, no formato de `GET .../messages` |
+| `conversation.updated` | `{ conversation }`: `ChatConversationView` para o funcionário, `ConsoleConversation` completa (com `assignedToMe` de quem recebe) para o analista |
+| `tickets.changed` | `{ conversationId, ownerId }`. Só para analistas: o painel de chamados do dono ficou desatualizado |
+| `session.expired` | `{}`. A sessão venceu e o servidor encerra o stream |
+
+- **Depois do commit:** os eventos só saem depois que a transação grava. No turno do agent, a mensagem do funcionário chega aos analistas junto com a resposta, porque um turno desfeito a apaga.
+- **Heartbeat:** um comentário `: ping` a cada 20 s mantém a conexão viva atrás do proxy do Next, que derruba conexões ociosas em 130 s.
+- **Reconexão:** o `EventSource` reenvia o `Last-Event-ID` sozinho, e a query `?lastEventId=` também é aceita. Se o id ainda está no buffer (os últimos 1000 eventos), chega `sync REPLAY` e só o que foi perdido. Senão, chega `sync RESYNC` e o cliente recarrega pelos `GET`.
+- **Cliente lento:** quem acumula mais de 256 KB sem ler é desconectado e reconecta pelo mesmo caminho.
+- **Limite:** o barramento fica em memória, então vale para uma única instância da API, e um reinício sempre leva a `RESYNC`. Com várias instâncias, o mesmo contrato precisaria de uma tabela outbox com sequência global e pub/sub.
 
 ## Variáveis de ambiente
 

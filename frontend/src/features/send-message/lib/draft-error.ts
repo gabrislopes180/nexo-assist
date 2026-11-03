@@ -48,9 +48,8 @@ export function getDraftFailure(error: unknown): DraftFailure {
         unavailable: true,
       });
     case "CONVERSATION_NOT_WITH_AGENT":
-      return failure("Não concluído", {
-        lock: { message: "Um analista vai continuar o atendimento por aqui." },
-      });
+      // Só o rascunho sai de cena: com analista, o chat continua aberto.
+      return failure("Não concluído", { unavailable: true, resync: true });
     case "INVALID_REQUEST":
     case "FORBIDDEN":
       return failure("Não conseguimos processar o rascunho.");

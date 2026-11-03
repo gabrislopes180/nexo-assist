@@ -53,11 +53,14 @@ describe("getDraftFailure", () => {
     });
   });
 
-  it("bloqueia o chat quando a conversa passou a um analista", () => {
-    expect(getDraftFailure(http("CONVERSATION_NOT_WITH_AGENT", 409))).toMatchObject({
+  it("conversa que passou a um analista: só o rascunho fica indisponível", () => {
+    expect(getDraftFailure(http("CONVERSATION_NOT_WITH_AGENT", 409))).toEqual({
       line: "Não concluído",
       retryable: false,
-      lock: { message: "Um analista vai continuar o atendimento por aqui." },
+      unavailable: true,
+      lock: null,
+      sessionExpired: false,
+      resync: true,
     });
   });
 

@@ -12,6 +12,7 @@ export function EmployeeChat() {
       <ChatThread
         items={chat.items}
         isPending={chat.isPending}
+        isAgentThinking={chat.isAgentThinking}
         lockedOut={chat.lock !== null}
         draftsLocked={chat.lock !== null && !chat.lock.allowsDrafts}
         onRetry={chat.retry}
@@ -30,6 +31,7 @@ export function EmployeeChat() {
           max={chat.limit}
           busy={chat.isPending}
           lock={chat.lock}
+          notice={chat.notice}
           onNewConversation={chat.startNewConversation}
         />
       </div>

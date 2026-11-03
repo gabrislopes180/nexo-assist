@@ -18,6 +18,7 @@ const failure = (overrides: Partial<ChatFailure> = {}): ChatFailure => ({
 
 const result = (
   conversation: Partial<ChatResponse["conversation"]> = {},
+  overrides: Partial<ChatResponse> = {},
 ): ChatResponse => ({
   conversation: {
     id: "c1",
@@ -25,7 +26,14 @@ const result = (
     messageCount: 1,
     messageLimit: 30,
     remainingMessages: 29,
+    analyst: null,
     ...conversation,
+  },
+  employeeMessage: {
+    id: "e1",
+    authorType: "EMPLOYEE",
+    content: "Oi",
+    createdAt: "2026-10-16T17:19:59.000Z",
   },
   message: {
     id: "m1",
@@ -40,6 +48,7 @@ const result = (
   ticketLookup: null,
   ticketDraft: null,
   quickReplies: null,
+  ...overrides,
 });
 
 const sent = (state: ChatState, id = "u1", text = "Oi"): ChatState =>
@@ -47,9 +56,8 @@ const sent = (state: ChatState, id = "u1", text = "Oi"): ChatState =>
 
 const succeeded = (
   state: ChatState,
-  id = "a1",
   turn: ChatResponse = result(),
-): ChatState => chatReducer(state, { type: "succeeded", id, result: turn });
+): ChatState => chatReducer(state, { type: "succeeded", result: turn });
 
 const failed = (state: ChatState, value: ChatFailure): ChatState =>
   chatReducer(state, { type: "failed", failure: value });
@@ -62,29 +70,40 @@ describe("chatReducer", () => {
       items: [],
       count: 0,
       limit: 30,
+      status: null,
+      analyst: null,
       pendingItemId: null,
       draftOp: null,
       lock: null,
+      inbox: [],
     });
   });
 
-  it("sent adiciona a mensagem e marca a pendência", () => {
+  it("sent adiciona a mensagem otimista e marca a pendência", () => {
     const state = sent(initial);
 
     expect(state.items).toEqual([
-      { kind: "user", id: "u1", text: "Oi", failure: null },
+      { kind: "user", id: "u1", text: "Oi", failure: null, createdAt: null },
     ]);
     expect(state.pendingItemId).toBe("u1");
     expect(state.count).toBe(0);
   });
 
-  it("succeeded acrescenta a resposta e atualiza conversa e contador", () => {
+  it("succeeded troca o id otimista pelo real e acrescenta a resposta", () => {
     const state = succeeded(sent(initial));
 
+    expect(state.items[0]).toEqual({
+      kind: "user",
+      id: "e1",
+      text: "Oi",
+      failure: null,
+      createdAt: "2026-10-16T17:19:59.000Z",
+    });
     expect(state.items[1]).toEqual({
       kind: "agent",
-      id: "a1",
+      id: "m1",
       content: "Resposta",
+      createdAt: "2026-10-16T17:20:00.000Z",
       steps: [{ label: "consultou seus chamados", failed: false }],
       lookup: null,
       selectedCode: null,
@@ -95,6 +114,7 @@ describe("chatReducer", () => {
     });
     expect(state).toMatchObject({
       conversationId: "c1",
+      status: "WITH_AGENT",
       count: 1,
       limit: 30,
       pendingItemId: null,
@@ -102,10 +122,26 @@ describe("chatReducer", () => {
     });
   });
 
+  it("succeeded sem mensagem do agent só grava a do funcionário", () => {
+    const analyst = { id: "a1", name: "Rafael Lima" };
+    const state = succeeded(
+      sent(initial),
+      result({ status: "WITH_ANALYST", analyst }, { message: null }),
+    );
+
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "user", id: "e1" });
+    expect(state).toMatchObject({
+      status: "WITH_ANALYST",
+      analyst,
+      lock: null,
+      pendingItemId: null,
+    });
+  });
+
   it("succeeded bloqueia ao esgotar o limite", () => {
     const state = succeeded(
       sent(initial),
-      "a1",
       result({ messageCount: 30, remainingMessages: 0 }),
     );
 
@@ -116,28 +152,39 @@ describe("chatReducer", () => {
   });
 
   it("succeeded bloqueia conversa encerrada", () => {
-    const state = succeeded(sent(initial), "a1", result({ status: "CLOSED" }));
+    const state = succeeded(sent(initial), result({ status: "CLOSED" }));
 
     expect(state.lock?.message).toBe("Esta conversa foi encerrada.");
   });
 
   it.each(["WAITING_ANALYST", "WITH_ANALYST"] as const)(
-    "succeeded bloqueia conversa em %s",
+    "succeeded não bloqueia conversa em %s, nem no limite",
     (status) => {
-      const state = succeeded(sent(initial), "a1", result({ status }));
+      const state = succeeded(
+        sent(initial),
+        result({ status, remainingMessages: 0 }),
+      );
 
-      expect(state.lock?.message).toBe("Um analista vai continuar o atendimento por aqui.");
+      expect(state.lock).toBeNull();
     },
   );
 
   it("prioriza o status sobre o limite, como o backend", () => {
     const state = succeeded(
       sent(initial),
-      "a1",
       result({ status: "CLOSED", remainingMessages: 0 }),
     );
 
     expect(state.lock?.message).toBe("Esta conversa foi encerrada.");
+  });
+
+  it("succeeded não cria mais o marco de transferência local", () => {
+    const state = succeeded(
+      sent(initial),
+      result({ status: "WAITING_ANALYST" }),
+    );
+
+    expect(state.items.some((item) => item.kind === "event")).toBe(false);
   });
 
   it("failed grava a falha no item pendente, sem mudar o contador", () => {
@@ -191,7 +238,7 @@ describe("chatReducer", () => {
   it("ticketSelected marca o código no item do agent", () => {
     const state = chatReducer(succeeded(sent(initial)), {
       type: "ticketSelected",
-      id: "a1",
+      id: "m1",
       code: "INC-20311",
     });
 

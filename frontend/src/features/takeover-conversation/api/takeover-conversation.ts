@@ -1,20 +1,11 @@
 import { consoleConversationResponseSchema } from "@/entities/conversation";
-import { consoleRequest } from "@/shared/api/console-request";
+import { apiRequest } from "@/shared/api/http-client";
 
-export interface ConsoleActionInput {
-  conversationId: string;
-  viewer: { id: string; name: string };
-}
-
-// Sem corpo: no backend real, o analista vem da sessão.
-export async function takeoverConversation({ conversationId, viewer }: ConsoleActionInput) {
-  const { conversation } = await consoleRequest(
+// Sem corpo: o analista vem da sessão.
+export async function takeoverConversation(conversationId: string) {
+  const { conversation } = await apiRequest(
     `/console/conversations/${encodeURIComponent(conversationId)}/takeover`,
-    {
-      method: "POST",
-      schema: consoleConversationResponseSchema,
-      mockContext: { viewer },
-    },
+    { method: "POST", schema: consoleConversationResponseSchema },
   );
   return conversation;
 }

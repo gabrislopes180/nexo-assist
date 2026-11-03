@@ -1,3 +1,4 @@
+import { closeSystemMessage, RETURN_SYSTEM_MESSAGE, takeoverSystemMessage } from "../conversations/attendance.js";
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
 import { HANDOFF_SYSTEM_MESSAGE } from "../conversations/handoff.js";
 import type { TicketType } from "../generated/prisma/enums.js";
@@ -147,6 +148,8 @@ async function seed(tx: DbTransaction, now: Date) {
         handoffSummary: c.handoffSummary ?? null,
         handoffAt: c.handoffAt ?? null,
         closedAt: c.closedAt ?? null,
+        assignedAt: c.assignedAt ?? null,
+        returnedToAgentAt: c.returnedToAgentAt ?? null,
         messageCount: c.messages.filter((m) => m.authorType === "EMPLOYEE").length,
         pendingDraft: undefined, // null no banco
         pendingDraftId: null,
@@ -298,6 +301,37 @@ async function verify(tx: DbTransaction, now: Date) {
     const handoffAt = c.handoffAt;
     const marker = c.messages.some((m) => m.authorType === "SYSTEM" && m.content === HANDOFF_SYSTEM_MESSAGE && sameTime(m.createdAt, handoffAt));
     check(marker, `conversa ${c.id}: sem mensagem de transferência em handoffAt`);
+  }
+
+  const users = new Map((await tx.user.findMany({ select: { id: true, name: true, role: true } })).map((u) => [u.id, u] as const));
+  for (const c of conversations) {
+    const hasSystem = (content: string, at: Date | null) =>
+      at !== null && c.messages.some((m) => m.authorType === "SYSTEM" && m.content === content && sameTime(m.createdAt, at));
+    const handoffFilled = c.handoffReason !== null && c.handoffSummary !== null && c.handoffAt !== null;
+    const analyst = c.analystId ? users.get(c.analystId) : undefined;
+    if (c.status === "WAITING_ANALYST") {
+      check(c.analystId === null && c.assignedAt === null && handoffFilled, `conversa ${c.id}: WAITING_ANALYST com analista ou sem transferência`);
+    }
+    if (c.status === "WITH_ANALYST") {
+      check(analyst !== undefined && c.assignedAt !== null && handoffFilled, `conversa ${c.id}: WITH_ANALYST sem analista, assignedAt ou transferência`);
+      check(hasSystem(takeoverSystemMessage(analyst.name), c.assignedAt), `conversa ${c.id}: sem a SYSTEM de quem assumiu em assignedAt`);
+    }
+    if (c.status === "WITH_AGENT") {
+      const clean = c.analystId === null && c.assignedAt === null && c.handoffReason === null && c.handoffSummary === null && c.handoffAt === null;
+      check(clean, `conversa ${c.id}: WITH_AGENT com analista ou transferência`);
+    }
+    if (c.status === "CLOSED") {
+      check(c.closedAt !== null, `conversa ${c.id}: CLOSED sem closedAt`);
+      if (c.analystId !== null) {
+        check(analyst !== undefined && hasSystem(closeSystemMessage(analyst.name), c.closedAt), `conversa ${c.id}: sem a SYSTEM de encerramento em closedAt`);
+      }
+    }
+    if (c.returnedToAgentAt !== null) {
+      check(hasSystem(RETURN_SYSTEM_MESSAGE, c.returnedToAgentAt), `conversa ${c.id}: sem a SYSTEM de devolução em returnedToAgentAt`);
+    }
+    for (const m of c.messages.filter((message) => message.authorType === "ANALYST")) {
+      check(m.authorId !== null && users.get(m.authorId)?.role === "ANALYST", `mensagem ${m.id}: ANALYST sem autor analista`);
+    }
   }
 
   for (const reason of ["EMPLOYEE_REQUEST", "LOW_CONFIDENCE", "CRITICAL", "OVERDUE"] as const) {

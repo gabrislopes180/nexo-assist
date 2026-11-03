@@ -31,12 +31,12 @@ function tamperPayload(token: string): string {
 describe("session token", () => {
   it("devolve o userId de um token válido", async () => {
     const token = await issueSessionToken({ userId: "user_1", secret, now });
-    assert.deepEqual(await verifySessionToken({ token, secret, now }), { userId: "user_1" });
+    assert.deepEqual(await verifySessionToken({ token, secret, now }), { userId: "user_1", expiresAt: after(EIGHT_HOURS_MS) });
   });
 
   it("vale até o último segundo das 8 horas e expira ao completá-las", async () => {
     const token = await issueSessionToken({ userId: "user_1", secret, now });
-    assert.deepEqual(await verifySessionToken({ token, secret, now: after(EIGHT_HOURS_MS - 1000) }), { userId: "user_1" });
+    assert.deepEqual(await verifySessionToken({ token, secret, now: after(EIGHT_HOURS_MS - 1000) }), { userId: "user_1", expiresAt: after(EIGHT_HOURS_MS) });
     assert.equal(await verifySessionToken({ token, secret, now: after(EIGHT_HOURS_MS) }), null);
   });
 

@@ -3,10 +3,12 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createApp } from "../app.js";
+import { createEventBus } from "../realtime/event-bus.js";
 import { createAuthService } from "../auth/auth-service.js";
 import { issueSessionToken } from "../auth/session-token.js";
 import type { AgentRunner, AgentTurnResult } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
+import { createConversationQueries } from "../conversations/conversation-queries.js";
 import { createConversationService } from "../conversations/conversation-service.js";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
@@ -14,6 +16,7 @@ import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft } from "..
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService, TicketServiceUnavailableError, type ResolvedTicketReader, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleService } from "./test-support.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -94,8 +97,8 @@ describe("rotas de criação de chamado", () => {
         return respond();
       },
     };
-    const chatService = createChatService({ conversations: createConversationService(client), agentRunner, tickets });
-    server = createApp({ config, authService: createAuthService(client), chatService }).listen(0);
+    const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets });
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });

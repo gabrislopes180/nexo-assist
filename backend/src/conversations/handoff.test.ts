@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
+import { startAgentTurn } from "./test-helpers.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ProposedTicketDraft } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
@@ -45,11 +46,15 @@ describe("transferência no completeTurn", () => {
   });
 
   it("transfere junto com a mensagem do agent e grava a mensagem SYSTEM depois dela", async () => {
-    const turn = await service.startTurn(ownerId, { content: "quero um analista", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "quero um analista", now: T0 });
     const stored = await service.completeTurn(turn, { content: "Vou transferir.", trace: TRACE, handoff: HANDOFF, now: T1 });
 
     assert.equal(stored.conversationStatus, "WAITING_ANALYST");
     const conversation = await conversationOf(turn.conversationId);
+    assert.deepEqual(
+      stored.systemMessages.map((m) => [m.id, m.conversationId, m.authorType, m.author, m.content, m.createdAt, m.trace]),
+      [[conversation.messages[2]?.id, turn.conversationId, "SYSTEM", null, HANDOFF_SYSTEM_MESSAGE, new Date(T1.getTime() + 1), null]],
+    );
     assert.equal(conversation.status, "WAITING_ANALYST");
     assert.equal(conversation.handoffReason, "EMPLOYEE_REQUEST");
     assert.equal(conversation.handoffSummary, HANDOFF.summary);
@@ -69,18 +74,19 @@ describe("transferência no completeTurn", () => {
   });
 
   it("sem transferência mantém WITH_AGENT e devolve o estado relido", async () => {
-    const turn = await service.startTurn(ownerId, { content: "oi", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "oi", now: T0 });
     const stored = await service.completeTurn(turn, { content: "Olá", trace: TRACE, now: T1 });
     assert.equal(stored.conversationStatus, "WITH_AGENT");
+    assert.deepEqual(stored.systemMessages, []);
     assert.equal((await conversationOf(turn.conversationId)).messages.length, 2);
   });
 
   it("descarta o rascunho pendente e o do turno ao transferir", async () => {
-    const first = await service.startTurn(ownerId, { content: "abre um chamado", now: T0 });
+    const first = await startAgentTurn(service, ownerId, { content: "abre um chamado", now: T0 });
     const withDraft = await service.completeTurn(first, { content: "Confirma?", trace: TRACE, ticketDraft: draft, now: T0 });
     assert.ok(withDraft.draftId);
 
-    const second = await service.startTurn(ownerId, { conversationId: first.conversationId, content: "prefiro analista", now: T1 });
+    const second = await startAgentTurn(service, ownerId, { conversationId: first.conversationId, content: "prefiro analista", now: T1 });
     const stored = await service.completeTurn(second, { content: "Vou transferir.", trace: TRACE, ticketDraft: draft, handoff: HANDOFF, now: T1 });
     assert.equal(stored.draftId, null);
     const conversation = await conversationOf(first.conversationId);
@@ -89,7 +95,7 @@ describe("transferência no completeTurn", () => {
   });
 
   it("só transfere conversa WITH_AGENT: se o estado mudou durante o turno, nada é gravado", async () => {
-    const turn = await service.startTurn(ownerId, { content: "quero um analista", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "quero um analista", now: T0 });
     await client.conversation.update({ where: { id: turn.conversationId }, data: { status: "WITH_ANALYST" } });
     await assert.rejects(service.completeTurn(turn, { content: "Vou transferir.", trace: TRACE, handoff: HANDOFF, now: T1 }), ConversationNotWithAgentError);
     const conversation = await conversationOf(turn.conversationId);
@@ -99,7 +105,7 @@ describe("transferência no completeTurn", () => {
   });
 
   it("turno sem transferência não grava em conversa que outra operação já transferiu", async () => {
-    const turn = await service.startTurn(ownerId, { content: "oi", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "oi", now: T0 });
     await client.$transaction((tx) => transferToAnalyst(tx, { conversationId: turn.conversationId, reason: "CRITICAL", summary: "s", at: T0 }));
     await assert.rejects(service.completeTurn(turn, { content: "Olá", trace: TRACE, ticketDraft: draft, now: T1 }), ConversationNotWithAgentError);
     const conversation = await conversationOf(turn.conversationId);
@@ -108,9 +114,9 @@ describe("transferência no completeTurn", () => {
   });
 
   it("desfazer o turno depois de uma transferência concorrente não volta lastMessageAt", async () => {
-    const first = await service.startTurn(ownerId, { content: "oi", now: T0 });
+    const first = await startAgentTurn(service, ownerId, { content: "oi", now: T0 });
     await service.completeTurn(first, { content: "Olá", trace: TRACE, now: T0 });
-    const turn = await service.startTurn(ownerId, { conversationId: first.conversationId, content: "e aí?", now: T1 });
+    const turn = await startAgentTurn(service, ownerId, { conversationId: first.conversationId, content: "e aí?", now: T1 });
     const transferredAt = new Date(T1.getTime() + 60_000);
     await client.$transaction((tx) => transferToAnalyst(tx, { conversationId: turn.conversationId, reason: "CRITICAL", summary: "s", at: transferredAt }));
     await service.abortTurn(turn);
@@ -122,7 +128,7 @@ describe("transferência no completeTurn", () => {
   });
 
   it("falha ao gravar a mensagem SYSTEM desfaz a resposta e a transferência", async () => {
-    const turn = await service.startTurn(ownerId, { content: "quero um analista", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "quero um analista", now: T0 });
     await client.$executeRawUnsafe(
       `CREATE TRIGGER "test_fail_system" BEFORE INSERT ON "Message" WHEN NEW."authorType" = 'SYSTEM' BEGIN SELECT RAISE(ABORT, 'falha simulada'); END`,
     );

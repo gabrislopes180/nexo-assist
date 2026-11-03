@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import type { ConversationQueries } from "../conversations/conversation-queries.js";
 import type { ConversationService, TurnReservation } from "../conversations/conversation-service.js";
 import type { ProposedTicketDraft } from "../shared/chat.js";
 import {
@@ -17,30 +18,47 @@ const NOW = new Date("2026-11-01T12:00:00.000Z");
 const employee: SessionUser = { id: "u1", name: "Pessoa", email: "p@teste.example", role: "EMPLOYEE", department: null };
 const trace: AgentTrace = { understood: "x", intent: "OTHER", actions: [], confidence: "LOW", reason: "y" };
 
+const employeeMessage = {
+  id: "m1",
+  conversationId: "c1",
+  authorType: "EMPLOYEE",
+  author: { id: "u1", name: "Pessoa" },
+  content: "oi",
+  createdAt: NOW,
+  trace: null,
+} as const;
+
 const reservation: TurnReservation = {
   conversationId: "c1",
   isNew: false,
   employeeMessageId: "m1",
+  employeeMessage,
   messageCount: 4,
   status: "WITH_AGENT",
   previousLastMessageAt: NOW,
+  returnedToAgentAt: null,
   history: [],
 };
+const agentTurn = { kind: "AGENT_TURN", reservation } as const;
 
 function fakeConversations(overrides: Partial<ConversationService> = {}) {
   const log: string[] = [];
   const conversations: ConversationService = {
     startTurn: () => {
       log.push("startTurn");
-      return Promise.resolve(reservation);
+      return Promise.resolve(agentTurn);
     },
     completeTurn: () => {
       log.push("completeTurn");
-      return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WITH_AGENT" });
+      return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WITH_AGENT", systemMessages: [] });
     },
     readDraft: () => Promise.reject(new Error("não usado aqui")),
     confirmDraft: () => Promise.reject(new Error("não usado aqui")),
     cancelDraft: () => Promise.reject(new Error("não usado aqui")),
+    takeOver: () => Promise.reject(new Error("não usado aqui")),
+    replyAsAnalyst: () => Promise.reject(new Error("não usado aqui")),
+    returnToAgent: () => Promise.reject(new Error("não usado aqui")),
+    closeAttendance: () => Promise.reject(new Error("não usado aqui")),
     abortTurn: () => {
       log.push("abortTurn");
       return Promise.resolve();
@@ -60,9 +78,12 @@ const unusedTickets: Tickets = {
   ensureAvailable,
 };
 
+type ConversationReads = Pick<ConversationQueries, "ownedByEmployee">;
+const unusedQueries: ConversationReads = { ownedByEmployee: () => Promise.reject(new Error("não usado aqui")) };
+
 type ServiceDeps = Parameters<typeof createService>[0];
-const createChatService = (deps: Omit<ServiceDeps, "tickets"> & Partial<Pick<ServiceDeps, "tickets">>) =>
-  createService({ tickets: unusedTickets, ...deps });
+const createChatService = (deps: Omit<ServiceDeps, "tickets" | "queries"> & Partial<Pick<ServiceDeps, "tickets" | "queries">>) =>
+  createService({ tickets: unusedTickets, queries: unusedQueries, ...deps });
 
 describe("ChatService", () => {
   it("recusa quem não é funcionário antes de abrir o turno", async () => {
@@ -77,7 +98,7 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       startTurn: (...args) => {
         calls.push(args);
-        return Promise.resolve(reservation);
+        return Promise.resolve(agentTurn);
       },
     });
     const service = createChatService({ conversations, agentRunner: okRunner, now: () => NOW });
@@ -90,7 +111,7 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       startTurn: (...args) => {
         calls.push(args);
-        return Promise.resolve(reservation);
+        return Promise.resolve(agentTurn);
       },
     });
     await createChatService({ conversations, agentRunner: okRunner, now: () => NOW }).sendMessage(employee, { message: "oi" });
@@ -108,7 +129,8 @@ describe("ChatService", () => {
     const response = await createChatService({ conversations, agentRunner }).sendMessage(employee, { message: "oi" });
     assert.deepEqual(log, ["startTurn", "runTurn:c1", "completeTurn"]);
     assert.deepEqual(response, {
-      conversation: { id: "c1", status: "WITH_AGENT", messageCount: 4, messageLimit: 30, remainingMessages: 26 },
+      conversation: { id: "c1", status: "WITH_AGENT", messageCount: 4, messageLimit: 30, remainingMessages: 26, analyst: null },
+      employeeMessage: { id: "m1", authorType: "EMPLOYEE", content: "oi", createdAt: NOW.toISOString() },
       message: { id: "m2", authorType: "AGENT", content: "olá", trace, createdAt: NOW.toISOString() },
       ticketLookup: null,
       ticketDraft: null,
@@ -150,7 +172,7 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       completeTurn: (_reservation, reply) => {
         received.push(reply.ticketDraft);
-        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: "d1", conversationStatus: "WITH_AGENT" });
+        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: "d1", conversationStatus: "WITH_AGENT", systemMessages: [] });
       },
     });
     const agentRunner: AgentRunner = { runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, ticketDraft }) };
@@ -162,7 +184,7 @@ describe("ChatService", () => {
 
   it("usa no envelope o estado da conversa relido ao fim do turno, não o da reserva", async () => {
     const { conversations } = fakeConversations({
-      completeTurn: () => Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WAITING_ANALYST" }),
+      completeTurn: () => Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WAITING_ANALYST", systemMessages: [] }),
     });
     const agentRunner: AgentRunner = {
       runTurn: () => Promise.resolve({ content: "olá", trace, ticketLookup: null, handoff: { reason: "EMPLOYEE_REQUEST", summary: "Pediu analista." } }),
@@ -176,7 +198,7 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       completeTurn: (_reservation, reply) => {
         received.push(reply.handoff);
-        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WAITING_ANALYST" });
+        return Promise.resolve({ id: "m2", content: "olá", trace, createdAt: NOW, draftId: null, conversationStatus: "WAITING_ANALYST", systemMessages: [] });
       },
     });
     const handoff = { reason: "LOW_CONFIDENCE", summary: "  Não entendi o pedido.  " } as const;
@@ -209,7 +231,7 @@ describe("ChatService", () => {
     const { conversations } = fakeConversations({
       completeTurn: (_reservation, reply) => {
         replies.push(reply);
-        return Promise.resolve({ id: "m2", content: reply.content, trace: reply.trace, createdAt: NOW, draftId: null, conversationStatus: "WITH_AGENT" });
+        return Promise.resolve({ id: "m2", content: reply.content, trace: reply.trace, createdAt: NOW, draftId: null, conversationStatus: "WITH_AGENT", systemMessages: [] });
       },
     });
     const agentRunner: AgentRunner = {
@@ -224,7 +246,7 @@ describe("ChatService", () => {
     };
     const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(null), findResolvedTicketByCode: unusedTickets.findResolvedTicketByCode, ensureAvailable };
     const response = await createChatService({ conversations, agentRunner, tickets }).sendMessage(employee, { message: "oi" });
-    assert.notEqual(response.message.content, "Confira e confirme");
+    assert.notEqual(response.message?.content, "Confira e confirme");
     assert.equal(response.ticketDraft, null);
     assert.equal(response.quickReplies, null);
     assert.equal(replies[0]?.ticketDraft, null);
@@ -278,7 +300,7 @@ describe("ChatService", () => {
       const ticket = { code: "INC-1" } as never;
       const { conversations } = fakeConversations({
         readDraft: () => Promise.resolve(draft),
-        confirmDraft: () => Promise.resolve({ message: stored, ticket, conversation: { id: "c1", status: "WITH_AGENT" as const } }),
+        confirmDraft: () => Promise.resolve({ message: stored, ticket, conversation: { id: "c1", status: "WITH_AGENT" as const }, systemMessages: [] }),
         cancelDraft: () => Promise.resolve({ message: stored }),
       });
       const tickets: Tickets = { findOpenTicketByCode: () => Promise.resolve(ticket), findResolvedTicketByCode: unusedTickets.findResolvedTicketByCode, ensureAvailable };
@@ -317,10 +339,57 @@ describe("ChatService", () => {
   });
 });
 
+describe("ChatService.getConversation", () => {
+  const { conversations } = fakeConversations();
+  const snapshot = {
+    id: "c1",
+    status: "WITH_ANALYST",
+    owner: { id: "u1", name: "Pessoa", department: null },
+    analyst: { id: "a1", name: "Bruno Martins" },
+    messageCount: 31,
+    handoffReason: "EMPLOYEE_REQUEST",
+    handoffSummary: "pediu analista",
+    handoffAt: NOW,
+    assignedAt: NOW,
+    returnedToAgentAt: null,
+    lastMessageAt: NOW,
+    closedAt: null,
+  } as const;
+
+  it("recusa quem não é funcionário sem ler a conversa", async () => {
+    const reads: string[] = [];
+    const queries: ConversationReads = { ownedByEmployee: (ownerId) => (reads.push(ownerId), Promise.reject(new Error("não deveria ler"))) };
+    const service = createChatService({ conversations, agentRunner: okRunner, queries });
+    await assert.rejects(service.getConversation({ ...employee, role: "ANALYST" }, "c1"), EmployeeOnlyError);
+    assert.deepEqual(reads, []);
+  });
+
+  it("lê com o dono da sessão e serializa conversa e mensagens", async () => {
+    const reads: unknown[][] = [];
+    const queries: ConversationReads = {
+      ownedByEmployee: (...args) => (reads.push(args), Promise.resolve({ snapshot, messages: [employeeMessage] })),
+    };
+    const service = createChatService({ conversations, agentRunner: okRunner, queries });
+    const view = await service.getConversation(employee, "c1");
+    assert.deepEqual(reads, [["u1", "c1"]]);
+    assert.deepEqual(view.conversation, {
+      id: "c1",
+      status: "WITH_ANALYST",
+      messageCount: 31,
+      messageLimit: 30,
+      remainingMessages: 0,
+      analyst: { id: "a1", name: "Bruno Martins" },
+    });
+    assert.deepEqual(view.messages, [
+      { id: "m1", authorType: "EMPLOYEE", author: { id: "u1", name: "Pessoa" }, content: "oi", createdAt: NOW.toISOString(), trace: null },
+    ]);
+  });
+});
+
 describe("createProvisionalAgentRunner", () => {
   it("lança AgentUnavailableError até o agent existir", async () => {
     await assert.rejects(
-      createProvisionalAgentRunner().runTurn({ conversationId: "c", actor: { id: "u", name: "n" }, history: [], message: "m" }),
+      createProvisionalAgentRunner().runTurn({ conversationId: "c", actor: { id: "u", name: "n" }, history: [], message: "m", returnedFromAnalyst: false }),
       AgentUnavailableError,
     );
   });

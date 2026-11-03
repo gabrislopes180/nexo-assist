@@ -48,6 +48,13 @@ const turn = (overrides: Partial<ChatResponse> = {}): ChatResponse => ({
     messageCount: 1,
     messageLimit: 30,
     remainingMessages: 29,
+    analyst: null,
+  },
+  employeeMessage: {
+    id: "e",
+    authorType: "EMPLOYEE",
+    content: "oi",
+    createdAt: "2026-10-20T11:59:59.000Z",
   },
   message: {
     id: "m",
@@ -62,7 +69,7 @@ const turn = (overrides: Partial<ChatResponse> = {}): ChatResponse => ({
 });
 
 const agentMessage = (content: string) => ({
-  id: "m2",
+  id: "a2",
   content,
   createdAt: "2026-10-20T12:01:00.000Z",
   trace: {
@@ -72,9 +79,17 @@ const agentMessage = (content: string) => ({
   },
 });
 
+/** Um turno completo; a resposta do agent ganha o id `a<n>`. */
 function exchange(state: ChatState, n: number, result: ChatResponse) {
   const sent = chatReducer(state, { type: "sent", id: `u${n}`, text: "oi" });
-  return chatReducer(sent, { type: "succeeded", id: `a${n}`, result });
+  return chatReducer(sent, {
+    type: "succeeded",
+    result: {
+      ...result,
+      employeeMessage: { ...result.employeeMessage, id: `e${n}` },
+      message: result.message && { ...result.message, id: `a${n}` },
+    },
+  });
 }
 
 const agentItem = (state: ChatState, id: string) => {
@@ -155,7 +170,6 @@ describe("chatReducer: rascunhos", () => {
     });
     const state = chatReducer(started, {
       type: "draftConfirmed",
-      id: "a2",
       result: { message: agentMessage("Pronto, abri o INC-20311."), ticket },
     });
 
@@ -179,7 +193,6 @@ describe("chatReducer: rascunhos", () => {
     });
     const state = chatReducer(started, {
       type: "draftCancelled",
-      id: "a2",
       result: { message: agentMessage("Tudo bem, cancelei.") },
     });
 
@@ -293,44 +306,34 @@ describe("chatReducer: rascunhos", () => {
 
     const reopened = chatReducer(started, {
       type: "draftConfirmed",
-      id: "a2",
       result: { message: agentMessage("Chamado reaberto."), ticket },
     });
     expect(agentItem(reopened, "a1").draft?.status).toBe("confirmed");
     expect(reopened.items.at(-1)).toMatchObject({ ticket });
   });
 
-  it("transferência no turno: insere o evento uma vez e trava o chat", () => {
-    const waiting = (n: number) =>
+  it("transferência no turno: não trava o chat nem cria marco local", () => {
+    const state = exchange(
+      createInitialChatState(),
+      1,
       turn({
         conversation: {
           id: "c1",
           status: "WAITING_ANALYST",
-          messageCount: n,
+          messageCount: 1,
           messageLimit: 30,
-          remainingMessages: 30 - n,
+          remainingMessages: 29,
+          analyst: null,
         },
-      });
-    const once = exchange(createInitialChatState(), 1, waiting(1));
-    const events = (state: ChatState) =>
-      state.items.filter((item) => item.kind === "event");
+      }),
+    );
 
-    expect(events(once)).toEqual([
-      {
-        kind: "event",
-        id: "a1-transfer",
-        text: "Transferida para um analista",
-        at: "2026-10-20T12:00:00.000Z",
-      },
-    ]);
-    expect(once.items.at(-1)?.kind).toBe("event");
-    expect(once.lock).toEqual({
-      message: "Um analista vai continuar o atendimento por aqui.",
-    });
-    expect(events(exchange(once, 2, waiting(2)))).toHaveLength(1);
+    expect(state.items.some((item) => item.kind === "event")).toBe(false);
+    expect(state.status).toBe("WAITING_ANALYST");
+    expect(state.lock).toBeNull();
   });
 
-  it("transferência na confirmação: trava o chat e insere o evento", () => {
+  it("transferência na confirmação: atualiza o status sem travar", () => {
     const started = chatReducer(withDraft(), {
       type: "draftActionStarted",
       id: "a1",
@@ -338,7 +341,6 @@ describe("chatReducer: rascunhos", () => {
     });
     const state = chatReducer(started, {
       type: "draftConfirmed",
-      id: "a2",
       result: {
         message: agentMessage("Abri o INC-20311 e chamei um analista."),
         ticket: { ...ticket, priority: "CRITICAL" },
@@ -346,14 +348,9 @@ describe("chatReducer: rascunhos", () => {
       },
     });
 
-    expect(state.items.at(-1)).toMatchObject({
-      kind: "event",
-      text: "Transferida para um analista",
-    });
-    expect(state.items.at(-2)).toMatchObject({ kind: "agent", id: "a2" });
-    expect(state.lock?.message).toBe(
-      "Um analista vai continuar o atendimento por aqui.",
-    );
+    expect(state.items.at(-1)).toMatchObject({ kind: "agent", id: "a2" });
+    expect(state.status).toBe("WAITING_ANALYST");
+    expect(state.lock).toBeNull();
   });
 
   it("confirmação sem transferência não trava nem insere evento", () => {
@@ -364,7 +361,6 @@ describe("chatReducer: rascunhos", () => {
     });
     const state = chatReducer(started, {
       type: "draftConfirmed",
-      id: "a2",
       result: {
         message: agentMessage("Pronto."),
         ticket,

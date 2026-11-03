@@ -1,4 +1,5 @@
 import { Bot, ChevronRight } from "lucide-react";
+import type { ReactNode } from "react";
 import {
   conversationStatusPill,
   type ConsoleConversation,
@@ -14,6 +15,8 @@ interface ConsoleThreadHeaderProps {
   onBack?: () => void;
   showPanelButton: boolean;
   onOpenPanel: () => void;
+  /** Ações de quem atende; abaixo de 640 px vão para uma linha embaixo. */
+  actions?: ReactNode;
 }
 
 export function ConsoleThreadHeader({
@@ -21,6 +24,7 @@ export function ConsoleThreadHeader({
   onBack,
   showPanelButton,
   onOpenPanel,
+  actions,
 }: ConsoleThreadHeaderProps) {
   const { owner } = conversation;
   const pill = conversationStatusPill(conversation);
@@ -29,6 +33,7 @@ export function ConsoleThreadHeader({
     .join(" · ");
 
   return (
+    <>
     <header className="flex h-(--topbar-height) shrink-0 items-center gap-3 border-b border-rule bg-paper px-5">
       {onBack ? (
         <Button
@@ -54,18 +59,29 @@ export function ConsoleThreadHeader({
           <p className="truncate text-caption text-ink-3">{meta}</p>
         ) : null}
       </div>
-      <StatusBadge
-        variant="pill"
-        tone={pill.tone}
-        icon={pill.icon === "bot" ? Bot : undefined}
-      >
-        {pill.label}
-      </StatusBadge>
+      {actions ? (
+        // As ações já dizem que a conversa é de quem vê a tela, como no protótipo.
+        <div className="shrink-0 max-sm:hidden">{actions}</div>
+      ) : (
+        <StatusBadge
+          variant="pill"
+          tone={pill.tone}
+          icon={pill.icon === "bot" ? Bot : undefined}
+        >
+          {pill.label}
+        </StatusBadge>
+      )}
       {showPanelButton ? (
         <Button variant="secondary" onClick={onOpenPanel}>
           Ver chamados
         </Button>
       ) : null}
     </header>
+    {actions ? (
+      <div className="flex shrink-0 border-b border-rule bg-paper px-5 py-2.5 sm:hidden">
+        {actions}
+      </div>
+    ) : null}
+    </>
   );
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { createTestDatabase } from "../db/test-database.js";
+import { startAgentTurn } from "./test-helpers.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConfirmDraftRequest, ProposedTicketDraft } from "../shared/chat.js";
 import { createDraftSchema } from "../shared/conversation-draft.js";
@@ -43,7 +44,7 @@ describe("criação de chamado por rascunho", () => {
   let otherOwnerId: string;
 
   async function conversationWithDraft(draft: ProposedTicketDraft = proposal()) {
-    const turn = await service.startTurn(ownerId, { content: "abre um chamado", now: T0 });
+    const turn = await startAgentTurn(service, ownerId, { content: "abre um chamado", now: T0 });
     const stored = await service.completeTurn(turn, { content: "Confirma?", trace: TRACE, ticketDraft: draft, now: T0 });
     assert.ok(stored.draftId);
     return { conversationId: turn.conversationId, draftId: stored.draftId };
@@ -207,9 +208,14 @@ describe("criação de chamado por rascunho", () => {
     describe("teto de prioridade", () => {
       it("mantém CRITICAL com TEAM, avisa da prioridade e transfere a conversa", async () => {
         const { conversationId, draftId } = await conversationWithDraft(proposal({ priority: "CRITICAL" }));
-        const { ticket, message, conversation } = await confirm(draftId);
+        const { ticket, message, conversation, systemMessages } = await confirm(draftId);
         assert.equal(ticket.priority, "CRITICAL");
         assert.deepEqual(conversation, { id: conversationId, status: "WAITING_ANALYST" });
+        assert.deepEqual(
+          systemMessages.map((m) => [m.conversationId, m.authorType, m.author, m.content, m.trace]),
+          [[conversationId, "SYSTEM", null, "Transferida para um analista", null]],
+        );
+        assert.ok((systemMessages[0]?.createdAt.getTime() ?? 0) > message.createdAt.getTime());
         assert.match(message.content, /analista/);
         assert.match(message.content, /Crítica/);
         assert.match(message.content, /1 hora/);
@@ -217,9 +223,10 @@ describe("criação de chamado por rascunho", () => {
 
       it("rebaixa para HIGH quando a edição deixa o escopo INDIVIDUAL, com prazo e aviso coerentes", async () => {
         const { draftId } = await conversationWithDraft(proposal({ priority: "CRITICAL" }));
-        const { ticket, message, conversation } = await confirm(draftId, request({ affectedScope: "INDIVIDUAL" }));
+        const { ticket, message, conversation, systemMessages } = await confirm(draftId, request({ affectedScope: "INDIVIDUAL" }));
         assert.equal(ticket.priority, "HIGH");
         assert.equal(conversation.status, "WITH_AGENT");
+        assert.deepEqual(systemMessages, []);
         assert.equal(ticket.dueAt, computeDueAt("HIGH", T1).toISOString());
         assert.match(message.content, /Alta/);
       });

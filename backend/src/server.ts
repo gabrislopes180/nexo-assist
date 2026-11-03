@@ -4,9 +4,13 @@ import { loadApiConfig, type ApiConfig } from "./api/config.js";
 import { createApp } from "./app.js";
 import { createAuthService } from "./auth/auth-service.js";
 import { createChatService } from "./chat/chat-service.js";
+import { createConsoleService } from "./console/console-service.js";
+import { createConversationQueries } from "./conversations/conversation-queries.js";
 import { createConversationService } from "./conversations/conversation-service.js";
 import { checkDatabaseConnection } from "./db/check-connection.js";
 import { prisma } from "./db/prisma.js";
+import { createEventBus } from "./realtime/event-bus.js";
+import { createFanout } from "./realtime/fanout.js";
 import { createTicketServiceFromEnv } from "./tickets/resilient-ticket-service.js";
 import { createTicketService, type FullTicketService } from "./tickets/ticket-service.js";
 
@@ -30,8 +34,15 @@ function readConfig(): BootConfig | null {
 const config = readConfig();
 
 if (config && (await checkDatabaseConnection(prisma))) {
+  const queries = createConversationQueries(prisma);
+  // Tempo real em memória: vale para uma instância da API (veja o README, "Tempo real").
+  const eventBus = createEventBus();
+  const fanout = createFanout({ bus: eventBus, readConversation: (id) => queries.find(id) });
+  const conversations = createConversationService(prisma, { publisher: fanout });
+  const consoleService = createConsoleService({ conversations, queries, tickets: config.ticketService });
   const chatService = createChatService({
-    conversations: createConversationService(prisma),
+    conversations,
+    queries,
     tickets: config.ticketService,
     agentRunner: createAgentRunner({
       model: config.agent.model,
@@ -40,9 +51,24 @@ if (config && (await checkDatabaseConnection(prisma))) {
       onTurnMetrics: (metrics) => console.log("Turno do agent:", JSON.stringify(metrics)),
     }),
   });
-  createApp({ config: config.api, authService: createAuthService(prisma), chatService }).listen(PORT, () => {
-    console.log(`API rodando em http://localhost:${PORT}`);
-  });
+  const server = createApp({ config: config.api, authService: createAuthService(prisma), chatService, consoleService, eventBus }).listen(
+    PORT,
+    () => {
+      console.log(`API rodando em http://localhost:${PORT}`);
+    },
+  );
+
+  // Os streams SSE nunca terminam sozinhos: sem encerrá-los, o server.close() esperaria para sempre.
+  // Espera o fan-out terminar o que já recebeu, para não perder eventos já gravados.
+  const shutdown = async () => {
+    await fanout.idle();
+    eventBus.closeAll();
+    server.close(() => {
+      void prisma.$disconnect();
+    });
+  };
+  process.once("SIGINT", () => void shutdown());
+  process.once("SIGTERM", () => void shutdown());
 } else {
   process.exitCode = 1;
 }

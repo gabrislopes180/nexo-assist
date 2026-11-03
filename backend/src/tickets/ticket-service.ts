@@ -1,5 +1,6 @@
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { TicketStatus } from "../generated/prisma/enums.js";
+import type { ConsoleTicket } from "../shared/console.js";
 import type { SimilarTicket, TicketLookupCriteria, TicketLookupResult, TicketSummary } from "../shared/chat.js";
 import { isOverdue } from "./sla.js";
 import { byUrgency, MAX_LOOKUP_TICKETS, matchTickets, similarTicketMatches, toTicketSummary, type MatchableTicket } from "./ticket-matching.js";
@@ -45,12 +46,22 @@ export type ResolvedTicketReader = {
   findResolvedTicketByCode(ownerId: string, code: string, now: Date): Promise<{ ticket: SimilarTicket; canReopen: boolean } | null>;
 };
 
+/** Chamados do dono para o painel do console: abertos por `updatedAt` desc, depois resolvidos por `resolvedAt` desc. */
+export type OwnerTicketReader = {
+  listOwnerTickets(ownerId: string): Promise<ConsoleTicket[]>;
+};
+
 /** Falha com TicketServiceUnavailableError quando o serviço não pode receber uma escrita. */
 export type TicketAvailability = {
   ensureAvailable(): Promise<void>;
 };
 
-export type FullTicketService = TicketService & TicketCodeReader & SimilarTicketReader & ResolvedTicketReader & TicketAvailability;
+export type FullTicketService = TicketService &
+  TicketCodeReader &
+  SimilarTicketReader &
+  ResolvedTicketReader &
+  OwnerTicketReader &
+  TicketAvailability;
 
 export const matchableTicketSelect = {
   code: true,
@@ -88,6 +99,28 @@ export function isOpenTicket<T extends { status: TicketStatus }>(ticket: T): tic
 
 export function createTicketService(client: Pick<PrismaClient, "ticket">): FullTicketService {
   return {
+    async listOwnerTickets(ownerId) {
+      const rows = await client.ticket.findMany({
+        where: { ownerId },
+        select: { code: true, type: true, category: true, priority: true, status: true, title: true, createdAt: true, updatedAt: true, resolvedAt: true },
+      });
+      const open = rows.filter(isOpen).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      const resolved = rows
+        .filter((ticket) => !isOpen(ticket))
+        .sort((a, b) => (b.resolvedAt?.getTime() ?? 0) - (a.resolvedAt?.getTime() ?? 0));
+      return [...open, ...resolved].map((ticket) => ({
+        code: ticket.code,
+        type: ticket.type,
+        category: ticket.category,
+        priority: ticket.priority,
+        status: ticket.status,
+        statusLabel: TICKET_STATUS_LABEL[ticket.status],
+        title: ticket.title,
+        createdAt: ticket.createdAt.toISOString(),
+        resolvedAt: ticket.resolvedAt?.toISOString() ?? null,
+      }));
+    },
+
     async ensureAvailable() {
       await client.ticket.findFirst({ select: { id: true } });
     },

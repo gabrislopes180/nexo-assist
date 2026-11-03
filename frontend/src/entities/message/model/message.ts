@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const agentActionSchema = z.object({
+export const agentActionSchema = z.object({
   tool: z.string().min(1),
   summary: z.string(),
   status: z.enum(["SUCCESS", "ERROR", "SKIPPED"]),
