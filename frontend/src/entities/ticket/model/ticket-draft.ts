@@ -75,8 +75,4 @@ export type DraftConfirmBody =
 
 /** Só `pending` aceita Confirmar, Editar e Cancelar. */
 export type DraftStatus =
-  | "pending"
-  | "confirmed"
-  | "cancelled"
-  | "superseded"
-  | "unavailable";
+  "pending" | "confirmed" | "cancelled" | "superseded" | "unavailable";

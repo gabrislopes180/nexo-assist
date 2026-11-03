@@ -20,7 +20,11 @@ const TOOL_STEPS: Record<string, StepsByStatus> = {
     ERROR: failed("não conseguiu consultar seus chamados"),
   },
   draftTicket: {
-    SUCCESS: done("classificou a prioridade", "consultou o SLA", "montou o rascunho"),
+    SUCCESS: done(
+      "classificou a prioridade",
+      "consultou o SLA",
+      "montou o rascunho",
+    ),
     ERROR: failed("não conseguiu montar o rascunho"),
   },
   draftComplement: {

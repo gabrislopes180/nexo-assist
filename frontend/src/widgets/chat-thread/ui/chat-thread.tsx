@@ -5,6 +5,7 @@ import {
   AgentMessage,
   AgentWaiting,
   QuickReplies,
+  SystemEvent,
   UserMessage,
 } from "@/entities/message";
 import {
@@ -184,6 +185,14 @@ export function ChatThread({
                 );
               }
 
+              if (item.kind === "event") {
+                return (
+                  <SystemEvent key={item.id} at={item.at} icon="transfer">
+                    {item.text}
+                  </SystemEvent>
+                );
+              }
+
               // Turno ou ação de rascunho em andamento: nada mais é clicável.
               const isIdle = !isPending && draftOp === null && !lockedOut;
               const canAnswer = isLast && isIdle;
@@ -195,9 +204,7 @@ export function ChatThread({
                   status={draft.status}
                   failureLine={draft.failure?.line ?? null}
                   canRetry={draft.failure?.retryable === true}
-                  interactive={
-                    !isPending && draftOp === null && !draftsLocked
-                  }
+                  interactive={!isPending && draftOp === null && !draftsLocked}
                   busyAction={
                     draftOp?.itemId === item.id ? draftOp.action : null
                   }

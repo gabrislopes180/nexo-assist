@@ -76,7 +76,7 @@ As camadas, de cima para baixo: `app` → `processes` → `pages` → `widgets` 
 
 Crie só os segmentos que a slice usa.
 
-Exceção: `processes/layouts` mantém `sidebar.tsx`, `authenticated-layout.tsx` e `authenticated-shell.tsx` direto na raiz da slice, sem segmento `ui/`.
+Exceção: `processes/layouts` mantém `sidebar.tsx`, `authenticated-layout.tsx`, `authenticated-shell.tsx` e `console-layout.tsx` direto na raiz da slice, sem segmento `ui/`.
 
 ## Onde fica cada coisa no Nexo
 
@@ -92,7 +92,9 @@ Exceção: `processes/layouts` mantém `sidebar.tsx`, `authenticated-layout.tsx`
 | `features/` | `send-message`, `confirm-ticket-draft`, `select-ticket`, `takeover-conversation`, `return-to-agent`, `close-conversation`, `login` |
 | `widgets/` | `login-hero`, `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `console-rail` |
 | `processes/` | `layouts`: sidebar compartilhado e layout autenticado |
-| `pages/` | `login`, `employee-console`, `profile` |
+| `pages/` | `login`, `employee-console`, `analyst-console`, `profile` |
+| `widgets/console-thread` | Conversa no console do analista, com a barra de atendimento |
+| `shared/api/console-mock` | **Provisório.** Mock do `/console` até o backend expor as rotas (`NEXT_PUBLIC_CONSOLE_API=real` desliga) |
 
 A tabela é um ponto de partida. Se algo não se encaixar, prefira a camada mais baixa que funcione e registre a decisão.
 

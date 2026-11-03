@@ -3,7 +3,9 @@ import { splitQuestion } from "./split-question";
 
 describe("splitQuestion", () => {
   it("separa a última linha quando ela é pergunta", () => {
-    expect(splitQuestion("Vou abrir um chamado.\n\nQuem está sendo afetado?")).toEqual({
+    expect(
+      splitQuestion("Vou abrir um chamado.\n\nQuem está sendo afetado?"),
+    ).toEqual({
       text: "Vou abrir um chamado.",
       question: "Quem está sendo afetado?",
     });

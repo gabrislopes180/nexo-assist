@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SESSION_QUERY_KEY } from "@/entities/session";
+import { CONSOLE_QUERY_ROOT } from "@/shared/api/query-keys";
 import { logout, signOut } from "./logout";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -29,6 +30,21 @@ describe("signOut", () => {
     await new Promise((resolve) => setTimeout(resolve));
 
     expect(client.getQueryData(SESSION_QUERY_KEY)).toBeNull();
+  });
+});
+
+describe("signOut e o console", () => {
+  it("remove os dados do console antes de anular a sessão", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 204 })),
+    );
+    const client = new QueryClient();
+    client.setQueryData([...CONSOLE_QUERY_ROOT, "conversations", "list"], [1]);
+
+    await signOut(client);
+
+    expect(client.getQueryCache().findAll({ queryKey: CONSOLE_QUERY_ROOT })).toEqual([]);
   });
 });
 

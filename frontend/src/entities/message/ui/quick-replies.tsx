@@ -15,7 +15,11 @@ export function QuickReplies({
   onSelect,
 }: QuickRepliesProps) {
   return (
-    <div role="group" aria-label="Respostas rápidas" className="flex flex-wrap gap-1.5">
+    <div
+      role="group"
+      aria-label="Respostas rápidas"
+      className="flex flex-wrap gap-1.5"
+    >
       {options.map((option) => {
         const isSelected = option === selected;
         return (

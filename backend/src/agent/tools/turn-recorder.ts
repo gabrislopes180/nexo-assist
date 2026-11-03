@@ -1,4 +1,9 @@
-import type { ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../../shared/chat.js";
+import type { HandoffProposal, ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../../shared/chat.js";
+
+/** Execução de `transferToAnalyst`. Recusada: a conversa continua com o agent. */
+export type HandoffExecution =
+  | { outcome: "ACCEPTED"; proposal: HandoffProposal }
+  | { outcome: "REJECTED"; problem: "OVERDUE_NOT_ACCEPTED" | "OFFER_DECLINED" | "DECLINED" | "NOT_REQUESTED" | "UNKNOWN_TICKET_CODE" | "UNAVAILABLE" };
 
 /** Por que `draftReopen` não propôs nada. `NOT_FOUND` cobre inexistente e alheio, sem distinguir. */
 export type ReopenBlock =
@@ -28,12 +33,19 @@ export type TurnRecorder = {
   last(): TicketLookupResult | undefined;
   recordDraft(execution: DraftExecution): void;
   drafts(): readonly DraftExecution[];
+  recordHandoff(execution: HandoffExecution): void;
+  handoffs(): readonly HandoffExecution[];
 };
 
 export function createTurnRecorder(): TurnRecorder {
   const lookups: TicketLookupResult[] = [];
   const drafts: DraftExecution[] = [];
+  const handoffs: HandoffExecution[] = [];
   return {
+    recordHandoff: (execution) => {
+      handoffs.push(execution);
+    },
+    handoffs: () => handoffs,
     record: (result) => {
       lookups.push(result);
     },
@@ -56,5 +68,11 @@ export type TurnContextValues = {
   shownCodes: readonly string[];
   /** Código do aviso de reabertura fora da janela ainda em aberto: o chamado novo leva "Relacionado ao <código>". */
   relatedCode: string | null;
+  /** Código do chamado vencido oferecido na última resposta do agent: só com ele `OVERDUE` é aceito. */
+  overdueOfferCode: string | null;
+  /** O usuário recusou a oferta de analista na troca anterior: só um novo pedido explícito transfere. */
+  offerDeclinedRecently: boolean;
+  /** Códigos já citados pelo agent na conversa, que o resumo para o analista pode repetir. */
+  knownCodes: readonly string[];
   recorder: TurnRecorder;
 };

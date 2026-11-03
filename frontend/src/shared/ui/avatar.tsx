@@ -11,11 +11,12 @@ const TONE_CLASSES = {
   gray: "bg-avatar-gray-bg text-avatar-gray-fg",
 } as const;
 
+// 34 mantém o estilo da sidebar; os outros seguem o protótipo do console.
 const SIZE_CLASSES = {
-  34: "size-8.5",
-  36: "size-9",
-  40: "size-10",
-  46: "size-11.5",
+  34: "size-8.5 text-label-strong",
+  36: "size-9 text-caption font-bold",
+  40: "size-10 text-body font-semibold",
+  46: "size-11.5 text-heading",
 } as const;
 
 interface AvatarProps {
@@ -23,20 +24,40 @@ interface AvatarProps {
   name: string;
   tone?: keyof typeof TONE_CLASSES;
   size?: keyof typeof SIZE_CLASSES;
+  /** Ponto de presença; o anel acompanha o fundo onde o avatar está. */
+  online?: boolean;
+  ring?: "paper" | "desk";
 }
 
-export function Avatar({ initials, name, tone = "self", size = 34 }: AvatarProps) {
+export function Avatar({
+  initials,
+  name,
+  tone = "self",
+  size = 34,
+  online = false,
+  ring = "paper",
+}: AvatarProps) {
   return (
     <span
       role="img"
-      aria-label={name}
+      aria-label={online ? `${name}, online` : name}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-pill text-label-strong",
+        "relative inline-flex shrink-0 items-center justify-center rounded-pill",
         TONE_CLASSES[tone],
         SIZE_CLASSES[size],
       )}
     >
       {initials}
+      {online ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute right-0 bottom-0 rounded-pill bg-success ring-2",
+            size === 46 ? "size-2.75" : "size-2.5",
+            ring === "desk" ? "ring-desk" : "ring-paper",
+          )}
+        />
+      ) : null}
     </span>
   );
 }

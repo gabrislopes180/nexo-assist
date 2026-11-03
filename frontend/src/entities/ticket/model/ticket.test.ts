@@ -37,16 +37,31 @@ describe("ticketSummarySchema", () => {
 
 describe("ticketLookupSchema", () => {
   it.each([
-    { outcome: "NO_OPEN_TICKETS", openTicketCount: 0, totalMatches: 0, tickets: [] },
+    {
+      outcome: "NO_OPEN_TICKETS",
+      openTicketCount: 0,
+      totalMatches: 0,
+      tickets: [],
+    },
     { outcome: "NO_MATCH", openTicketCount: 3, totalMatches: 0, tickets: [] },
-    { outcome: "SINGLE_MATCH", openTicketCount: 3, totalMatches: 1, tickets: [ticket] },
+    {
+      outcome: "SINGLE_MATCH",
+      openTicketCount: 3,
+      totalMatches: 1,
+      tickets: [ticket],
+    },
     {
       outcome: "MULTIPLE_MATCHES",
       openTicketCount: 3,
       totalMatches: 2,
       tickets: [ticket, { ...ticket, code: "INC-20298" }],
     },
-    { outcome: "UNAVAILABLE", openTicketCount: null, totalMatches: null, tickets: [] },
+    {
+      outcome: "UNAVAILABLE",
+      openTicketCount: null,
+      totalMatches: null,
+      tickets: [],
+    },
   ])("aceita o resultado $outcome", (lookup) => {
     expect(ticketLookupSchema.parse(lookup).outcome).toBe(lookup.outcome);
   });

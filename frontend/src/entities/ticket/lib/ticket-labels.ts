@@ -4,6 +4,7 @@ import type {
   TicketPriority,
   TicketStatus,
 } from "../model/ticket";
+import type { ConsoleTicketStatus } from "../model/console-ticket";
 
 export const CATEGORY_LABELS: Record<TicketCategory, string> = {
   ACCESS: "Acesso",
@@ -33,4 +34,10 @@ export const STATUS_TONES: Record<TicketStatus, StatusTone> = {
   WAITING_EMPLOYEE: "warning",
   IN_PROGRESS: "info",
   APPROVED: "success",
+};
+
+/** No console aparecem também os resolvidos. */
+export const CONSOLE_STATUS_TONES: Record<ConsoleTicketStatus, StatusTone> = {
+  ...STATUS_TONES,
+  RESOLVED: "neutral",
 };

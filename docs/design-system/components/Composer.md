@@ -10,5 +10,5 @@ Campo de escrever mensagem. **chat** (padrão): caixa de 48px com botão Enviar 
 ## Estados do chat
 
 - **Ocupado:** o campo continua editável, para a pessoa escrever a próxima mensagem. O botão mostra "Enviando", sem a seta, com `aria-disabled` e `aria-busy`. Enter é recusado sem apagar o texto.
-- **Bloqueado:** quando a conversa chega ao limite, é encerrada ou passa a um analista. A caixa fica em `desk` com opacidade 0,55, com o placeholder "Inicie uma nova conversa para continuar". Abaixo dela, a 100% de opacidade e no lugar do contador, ficam o aviso em `small` `ink-2` e o botão secundário "Iniciar nova conversa". O tom é neutro: bloqueio não é erro.
+- **Bloqueado:** quando a conversa chega ao limite, é encerrada ou passa a um analista ("Um analista vai continuar o atendimento por aqui."). A caixa fica em `desk` com opacidade 0,55, com o placeholder "Inicie uma nova conversa para continuar". Abaixo dela, a 100% de opacidade e no lugar do contador, ficam o aviso em `small` `ink-2` e o botão secundário "Iniciar nova conversa". O tom é neutro: bloqueio não é erro.
 - **Mensagem longa:** acima de 2.000 caracteres, o texto fica, a caixa ganha borda `danger` e o erro aparece em `caption` `danger-text`, à esquerda do contador. Some ao editar.

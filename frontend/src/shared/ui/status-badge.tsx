@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/shared/lib/utils";
 
@@ -41,13 +42,21 @@ export function statusDotClass(tone: StatusTone): string {
   return TONES[tone].dot;
 }
 
+/** Cor do texto de um tom, a mesma do `strong`. */
+export function statusTextClass(tone: StatusTone): string {
+  return TONES[tone].strong;
+}
+
 interface StatusBadgeProps {
   tone: StatusTone;
-  variant?: "dot" | "pill";
+  /** `tag` identifica quem escreveu no console ("IA", "Analista"). */
+  variant?: "dot" | "pill" | "tag";
   /** Na variante `dot`, pinta o texto na cor do tom, com peso 500. */
   strong?: boolean;
   /** Ponto pulsante, para o que está acontecendo agora. */
   pulse?: boolean;
+  /** Só na pill: troca o ponto pelo ícone. */
+  icon?: LucideIcon;
   children: ReactNode;
 }
 
@@ -56,10 +65,24 @@ export function StatusBadge({
   variant = "dot",
   strong = false,
   pulse = false,
+  icon: Icon,
   children,
 }: StatusBadgeProps) {
   const { dot, pill, strong: strongText } = TONES[tone];
   const isPill = variant === "pill";
+
+  if (variant === "tag") {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center rounded-sm px-1.5 py-px text-tag",
+          pill,
+        )}
+      >
+        {children}
+      </span>
+    );
+  }
 
   return (
     <span
@@ -71,15 +94,19 @@ export function StatusBadge({
         !isPill && strong && cn("font-medium", strongText),
       )}
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "rounded-pill",
-          isPill ? "size-1.75" : "size-1.5",
-          pulse && "motion-safe:animate-pulse",
-          dot,
-        )}
-      />
+      {isPill && Icon ? (
+        <Icon aria-hidden="true" size={14} className="shrink-0" />
+      ) : (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "rounded-pill",
+            isPill ? "size-1.75" : "size-1.5",
+            pulse && "motion-safe:animate-pulse",
+            dot,
+          )}
+        />
+      )}
       {children}
     </span>
   );

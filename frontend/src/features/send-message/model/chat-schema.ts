@@ -37,6 +37,8 @@ export const chatResponseSchema = z.object({
 export const confirmDraftResponseSchema = z.object({
   message: agentMessageSchema,
   ticket: ticketSummarySchema,
+  // Confirmar chamado crítico transfere a conversa: o status vem depois da ação.
+  conversation: conversationSchema.pick({ id: true, status: true }).optional(),
 });
 
 export const cancelDraftResponseSchema = z.object({

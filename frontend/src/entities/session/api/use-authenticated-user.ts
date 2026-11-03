@@ -5,7 +5,9 @@ import { useSession } from "./use-session";
 export function useAuthenticatedUser(): SessionUser {
   const { data } = useSession();
   if (!data) {
-    throw new Error("useAuthenticatedUser precisa estar dentro de SessionGate.");
+    throw new Error(
+      "useAuthenticatedUser precisa estar dentro de SessionGate.",
+    );
   }
   return data;
 }

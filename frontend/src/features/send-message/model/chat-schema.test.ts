@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chatMessageSchema,
   chatResponseSchema,
+  confirmDraftResponseSchema,
   parseChatMessage,
 } from "./chat-schema";
 
@@ -135,6 +136,27 @@ describe("chatResponseSchema", () => {
       chatResponseSchema.parse({ ...response, quickReplies: ["Só eu", "Só eu"] })
         .quickReplies,
     ).toEqual(["Só eu"]);
+  });
+
+  it("aceita a conversa na resposta da confirmação", () => {
+    const parsed = confirmDraftResponseSchema.parse({
+      message: response.message,
+      ticket: {
+        code: "INC-1",
+        type: "INC",
+        category: "ACCESS",
+        priority: "CRITICAL",
+        status: "WAITING_ANALYST",
+        statusLabel: "Aguardando analista",
+        title: "Sem acesso",
+        createdAt: "2026-10-20T12:00:00.000Z",
+        dueAt: null,
+        overdue: false,
+      },
+      conversation: { id: "c1", status: "WAITING_ANALYST" },
+    });
+
+    expect(parsed.conversation).toEqual({ id: "c1", status: "WAITING_ANALYST" });
   });
 
   it("recusa status de conversa desconhecido", () => {

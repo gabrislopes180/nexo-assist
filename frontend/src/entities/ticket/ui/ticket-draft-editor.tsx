@@ -29,7 +29,9 @@ export function TicketDraftEditor({
   const firstFieldRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    firstFieldRef.current?.querySelector<HTMLElement>("input, textarea")?.focus();
+    firstFieldRef.current
+      ?.querySelector<HTMLElement>("input, textarea")
+      ?.focus();
   }, []);
 
   const update = (next: DraftValues, field: keyof DraftErrors) => {

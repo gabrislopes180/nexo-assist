@@ -6,7 +6,7 @@ describe("homePathFor", () => {
     expect(homePathFor("EMPLOYEE")).toBe("/console/employee");
   });
 
-  it("leva o analista ao perfil", () => {
-    expect(homePathFor("ANALYST")).toBe("/profile");
+  it("leva o analista ao console", () => {
+    expect(homePathFor("ANALYST")).toBe("/console/analyst");
   });
 });

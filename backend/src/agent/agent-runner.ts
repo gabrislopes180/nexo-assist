@@ -5,9 +5,10 @@ import { describeErrorForLog } from "../shared/safe-error.js";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.js";
 import { STRUCTURED_OUTPUT_INSTRUCTIONS } from "./instructions.js";
 import { trackModelCalls, type ModelCallStats } from "./model-calls.js";
+import { declinesPerson } from "./tools/handoff-intent.js";
 import { createNexoAgent, type NexoAgentDeps } from "./nexo-agent.js";
 import { createTurnRecorder, type TurnContextValues } from "./tools/turn-recorder.js";
-import { codesShownAsDuplicates, composeReply, llmDecisionSchema, parseDecision, relatedCodeFrom } from "./trace.js";
+import { codesShownAsDuplicates, composeReply, knownCodesFrom, llmDecisionSchema, offerDeclinedIn, overdueOfferCodeFrom, parseDecision, relatedCodeFrom } from "./trace.js";
 
 const MAX_STEPS = 4;
 const MODEL_SETTINGS = { maxOutputTokens: 1024, maxRetries: 1, temperature: 0 };
@@ -69,6 +70,11 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
       // Só códigos de avisos de parecido: um código citado numa consulta de status não foi oferecido como duplicado.
       requestContext.set("shownCodes", codesShownAsDuplicates(agentMessages));
       requestContext.set("relatedCode", relatedCodeFrom(agentMessages));
+      // Só vale se a oferta for a última mensagem da conversa: depois de outra mensagem do usuário, ela expirou.
+      const lastMessage = input.history.at(-1);
+      requestContext.set("overdueOfferCode", lastMessage?.authorType === "AGENT" ? overdueOfferCodeFrom([lastMessage.content]) : null);
+      requestContext.set("offerDeclinedRecently", offerDeclinedIn(input.history));
+      requestContext.set("knownCodes", knownCodesFrom(input.history));
       requestContext.set("recorder", recorder);
 
       const startedAt = Date.now();
@@ -92,9 +98,12 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
           fallbackText: output.text,
           executions: recorder.all(),
           drafts: recorder.drafts(),
+          handoffs: recorder.handoffs(),
+          overdueOfferActive: requestContext.get("overdueOfferCode") !== null,
+          suppressOverdueOffer: declinesPerson(input.message) || offerDeclinedIn(input.history),
         });
         if (!reply) throw new AgentUnavailableError();
-        return { ...reply, quickReplies: reply.quickReplies ?? null };
+        return { ...reply, quickReplies: reply.quickReplies ?? null, handoff: reply.handoff ?? null };
       } catch (error) {
         console.error("Falha no turno do agent:", describeErrorForLog(error));
         throw new AgentUnavailableError();

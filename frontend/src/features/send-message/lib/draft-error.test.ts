@@ -57,7 +57,7 @@ describe("getDraftFailure", () => {
     expect(getDraftFailure(http("CONVERSATION_NOT_WITH_AGENT", 409))).toMatchObject({
       line: "Não concluído",
       retryable: false,
-      lock: { message: "Esta conversa está com um analista." },
+      lock: { message: "Um analista vai continuar o atendimento por aqui." },
     });
   });
 

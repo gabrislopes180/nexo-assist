@@ -25,11 +25,15 @@ describe("trailSteps", () => {
   });
 
   it("oculta tool desconhecida e nunca usa o summary", () => {
-    expect(trailSteps([action("deleteEverything", "SUCCESS", "x")])).toEqual([]);
+    expect(trailSteps([action("deleteEverything", "SUCCESS", "x")])).toEqual(
+      [],
+    );
   });
 
   it("mostra os três passos do rascunho de chamado", () => {
-    expect(trailSteps([action("draftTicket", "SUCCESS")]).map((s) => s.label)).toEqual([
+    expect(
+      trailSteps([action("draftTicket", "SUCCESS")]).map((s) => s.label),
+    ).toEqual([
       "classificou a prioridade",
       "consultou o SLA",
       "montou o rascunho",
@@ -64,10 +68,9 @@ describe("trailSteps", () => {
   });
 
   it("mapeia a reabertura", () => {
-    expect(trailSteps([action("draftReopen", "SUCCESS")]).map((s) => s.label)).toEqual([
-      "consultou seus chamados",
-      "montou o rascunho",
-    ]);
+    expect(
+      trailSteps([action("draftReopen", "SUCCESS")]).map((s) => s.label),
+    ).toEqual(["consultou seus chamados", "montou o rascunho"]);
     expect(trailSteps([action("draftReopen", "ERROR")])).toEqual([
       { label: "não conseguiu montar o rascunho", failed: true },
     ]);

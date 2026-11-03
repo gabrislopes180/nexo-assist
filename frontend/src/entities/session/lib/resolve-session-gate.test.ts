@@ -35,7 +35,7 @@ describe("resolveSessionGate", () => {
         isError: false,
         requiredRole: "EMPLOYEE",
       }),
-    ).toEqual({ status: "redirect", to: "/profile" });
+    ).toEqual({ status: "redirect", to: "/console/analyst" });
   });
 
   it("leva ao login quando não há sessão", () => {

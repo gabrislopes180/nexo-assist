@@ -100,20 +100,20 @@ export function TicketDraftCard({
           description: values.kind === "REOPEN" ? values.reason : draft.reason,
         }
       : draft.kind === "CREATE"
-      ? {
-          kind: "Novo chamado",
-          number: "Rascunho",
-          title: values.kind === "CREATE" ? values.title : draft.title,
-          description:
-            values.kind === "CREATE" ? values.description : draft.description,
-        }
-      : {
-          kind: "Complemento",
-          number: draft.ticket.code,
-          title: draft.ticket.title,
-          description:
-            values.kind === "COMPLEMENT" ? values.content : draft.content,
-        };
+        ? {
+            kind: "Novo chamado",
+            number: "Rascunho",
+            title: values.kind === "CREATE" ? values.title : draft.title,
+            description:
+              values.kind === "CREATE" ? values.description : draft.description,
+          }
+        : {
+            kind: "Complemento",
+            number: draft.ticket.code,
+            title: draft.ticket.title,
+            description:
+              values.kind === "COMPLEMENT" ? values.content : draft.content,
+          };
 
   return (
     <article
@@ -163,7 +163,9 @@ export function TicketDraftCard({
                 aria-disabled={canAct ? undefined : true}
                 aria-busy={busyAction === "confirm" || undefined}
                 aria-keyshortcuts="Meta+Enter Control+Enter"
-                kbd={busyAction === "confirm" ? undefined : isMac ? "⌘↵" : "Ctrl ↵"}
+                kbd={
+                  busyAction === "confirm" ? undefined : isMac ? "⌘↵" : "Ctrl ↵"
+                }
                 onClick={() => {
                   if (canAct) onConfirm();
                 }}

@@ -126,7 +126,7 @@ describe("chatReducer", () => {
     (status) => {
       const state = succeeded(sent(initial), "a1", result({ status }));
 
-      expect(state.lock?.message).toBe("Esta conversa está com um analista.");
+      expect(state.lock?.message).toBe("Um analista vai continuar o atendimento por aqui.");
     },
   );
 

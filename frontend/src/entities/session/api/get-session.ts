@@ -1,9 +1,6 @@
 import { ApiError } from "@/shared/api/api-error";
 import { apiRequest } from "@/shared/api/http-client";
-import {
-  sessionResponseSchema,
-  type SessionUser,
-} from "../model/session-user";
+import { sessionResponseSchema, type SessionUser } from "../model/session-user";
 
 export async function getSession(): Promise<SessionUser | null> {
   try {

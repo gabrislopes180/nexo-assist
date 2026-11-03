@@ -8,6 +8,7 @@ import { instrumentModel } from "./model-calls.js";
 import { createDraftComplementTool } from "./tools/draft-complement.js";
 import { createDraftReopenTool } from "./tools/draft-reopen.js";
 import { createDraftTicketTool } from "./tools/draft-ticket.js";
+import { createTransferToAnalystTool } from "./tools/transfer-to-analyst.js";
 import { createSearchMyOpenTicketsTool } from "./tools/search-my-open-tickets.js";
 import type { TurnContextValues } from "./tools/turn-recorder.js";
 
@@ -24,6 +25,7 @@ export function createNexoAgent({ model, ticketService }: NexoAgentDeps) {
       draftComplement: createDraftComplementTool({ ticketService }),
       draftTicket: createDraftTicketTool({ ticketService }),
       draftReopen: createDraftReopenTool({ ticketService }),
+      transferToAnalyst: createTransferToAnalystTool(),
     },
   });
   // O logger padrão imprime o corpo cru da resposta do provedor.

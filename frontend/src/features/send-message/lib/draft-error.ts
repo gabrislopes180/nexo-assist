@@ -49,7 +49,7 @@ export function getDraftFailure(error: unknown): DraftFailure {
       });
     case "CONVERSATION_NOT_WITH_AGENT":
       return failure("Não concluído", {
-        lock: { message: "Esta conversa está com um analista." },
+        lock: { message: "Um analista vai continuar o atendimento por aqui." },
       });
     case "INVALID_REQUEST":
     case "FORBIDDEN":

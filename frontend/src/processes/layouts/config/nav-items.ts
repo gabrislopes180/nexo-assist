@@ -1,4 +1,9 @@
-import { MessageSquare, UserRound, type LucideIcon } from "lucide-react";
+import {
+  MessageCircle,
+  MessageSquare,
+  UserRound,
+  type LucideIcon,
+} from "lucide-react";
 import type { SessionUser } from "@/entities/session";
 
 export interface NavItem {
@@ -13,6 +18,12 @@ const ATTENDANCE: NavItem = {
   icon: MessageSquare,
 };
 
+const CONVERSATIONS: NavItem = {
+  label: "Conversas",
+  href: "/console/analyst",
+  icon: MessageCircle,
+};
+
 const PROFILE: NavItem = {
   label: "Meu perfil",
   href: "/profile",
@@ -20,5 +31,5 @@ const PROFILE: NavItem = {
 };
 
 export function navItemsFor(role: SessionUser["role"]): NavItem[] {
-  return role === "EMPLOYEE" ? [ATTENDANCE, PROFILE] : [PROFILE];
+  return role === "EMPLOYEE" ? [ATTENDANCE, PROFILE] : [CONVERSATIONS, PROFILE];
 }

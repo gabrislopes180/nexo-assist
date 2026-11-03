@@ -3,7 +3,16 @@ import {
   formatDueTime,
   formatShortDate,
   formatShortDateTime,
+  formatDayLabel,
+  formatListTime,
+  formatTime,
 } from "./format-date";
+
+describe("formatTime", () => {
+  it("mostra hora e minuto locais", () => {
+    expect(formatTime("2026-10-20T07:05:00")).toBe("07:05");
+  });
+});
 
 describe("formatDueTime", () => {
   const now = new Date("2026-10-20T10:00:00");
@@ -36,5 +45,39 @@ describe("formatShortDateTime", () => {
 
   it("mantém zero à esquerda na hora e no minuto", () => {
     expect(formatShortDateTime("2026-03-05T07:05:00")).toBe("05 mar, 07:05");
+  });
+});
+
+describe("formatListTime", () => {
+  const now = new Date("2026-10-20T10:05:30");
+
+  it("mostra agora no último minuto", () => {
+    expect(formatListTime("2026-10-20T10:05:00", now)).toBe("agora");
+  });
+
+  it("mostra a hora no mesmo dia, inclusive no futuro", () => {
+    expect(formatListTime("2026-10-20T09:58:00", now)).toBe("09:58");
+    expect(formatListTime("2026-10-20T11:00:00", now)).toBe("11:00");
+  });
+
+  it("mostra ontem e depois a data curta", () => {
+    expect(formatListTime("2026-10-19T23:59:00", now)).toBe("ontem");
+    expect(formatListTime("2026-10-16T16:40:00", now)).toBe("16 out");
+  });
+
+  it("vira o dia à meia-noite", () => {
+    const midnight = new Date("2026-10-20T00:00:30");
+    expect(formatListTime("2026-10-19T23:59:50", midnight)).toBe("agora");
+    expect(formatListTime("2026-10-19T23:58:00", midnight)).toBe("ontem");
+  });
+});
+
+describe("formatDayLabel", () => {
+  const now = new Date("2026-10-20T10:00:00");
+
+  it("rotula hoje, ontem e datas antigas", () => {
+    expect(formatDayLabel("2026-10-20T01:00:00", now)).toBe("Hoje");
+    expect(formatDayLabel("2026-10-19T23:00:00", now)).toBe("Ontem");
+    expect(formatDayLabel("2026-10-16T08:00:00", now)).toBe("16 out");
   });
 });

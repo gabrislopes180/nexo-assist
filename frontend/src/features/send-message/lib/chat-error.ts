@@ -51,7 +51,7 @@ export function getChatFailure(error: unknown): ChatFailure {
     case "CONVERSATION_CLOSED":
       return lockedFailure("Esta conversa foi encerrada.");
     case "CONVERSATION_NOT_WITH_AGENT":
-      return lockedFailure("Esta conversa está com um analista.");
+      return lockedFailure("Um analista vai continuar o atendimento por aqui.");
     case "CONVERSATION_NOT_FOUND":
       return lockedFailure("Esta conversa não está mais disponível.", true);
     case "INVALID_REQUEST":

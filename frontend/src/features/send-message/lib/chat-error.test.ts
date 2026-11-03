@@ -56,7 +56,7 @@ describe("getChatFailure", () => {
       "Você chegou ao limite de 30 mensagens nesta conversa.",
     ],
     ["CONVERSATION_CLOSED", "Esta conversa foi encerrada."],
-    ["CONVERSATION_NOT_WITH_AGENT", "Esta conversa está com um analista."],
+    ["CONVERSATION_NOT_WITH_AGENT", "Um analista vai continuar o atendimento por aqui."],
   ])("bloqueia o chat em %s", (code, message) => {
     expect(getChatFailure(http(code, 409))).toEqual({
       line: NOT_SENT,

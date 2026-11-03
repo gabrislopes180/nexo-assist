@@ -48,8 +48,7 @@ export function draftCardFields(
 ): TicketCardField[] {
   if (draft.kind === "COMPLEMENT") return ticketCardFields(draft.ticket);
 
-  const { category, priority } =
-    draft.kind === "REOPEN" ? draft.ticket : draft;
+  const { category, priority } = draft.kind === "REOPEN" ? draft.ticket : draft;
   const fields: TicketCardField[] = [
     { label: "Categoria", value: CATEGORY_LABELS[category] },
     {
@@ -79,12 +78,20 @@ function textError(text: string, max: number, emptyMessage: string) {
 export function validateDraftValues(values: DraftValues): DraftErrors {
   const errors: DraftErrors = {};
   if (values.kind === "REOPEN") {
-    const reason = textError(values.reason, DRAFT_TEXT_MAX, "Escreva o motivo.");
+    const reason = textError(
+      values.reason,
+      DRAFT_TEXT_MAX,
+      "Escreva o motivo.",
+    );
     if (reason) errors.reason = reason;
     return errors;
   }
   if (values.kind === "COMPLEMENT") {
-    const content = textError(values.content, DRAFT_TEXT_MAX, "Escreva o complemento.");
+    const content = textError(
+      values.content,
+      DRAFT_TEXT_MAX,
+      "Escreva o complemento.",
+    );
     if (content) errors.content = content;
     return errors;
   }

@@ -57,6 +57,8 @@ export interface DraftView {
 
 export type ChatItem =
   | { kind: "user"; id: string; text: string; failure: ChatFailure | null }
+  /** Marco local: a mensagem SYSTEM do backend não vem nas respostas. */
+  | { kind: "event"; id: string; text: string; at: string }
   | {
       kind: "agent";
       id: string;
@@ -109,15 +111,34 @@ export function createInitialChatState(): ChatState {
   };
 }
 
+const TRANSFER_EVENT = "Transferida para um analista";
+
+/** Insere o marco de transferência uma vez por conversa. */
+function withTransferEvent(
+  items: ChatItem[],
+  status: Conversation["status"],
+  id: string,
+  at: string,
+): ChatItem[] {
+  if (status !== "WAITING_ANALYST") return items;
+  if (items.some((item) => item.kind === "event")) return items;
+  return [
+    ...items,
+    { kind: "event", id: `${id}-transfer`, text: TRANSFER_EVENT, at },
+  ];
+}
+
 // Mesma ordem do backend, para o aviso ser igual ao do erro que ele devolveria.
-function lockFor(conversation: Conversation): ChatLock | null {
+function lockFor(
+  conversation: Pick<Conversation, "status"> & Partial<Conversation>,
+): ChatLock | null {
   if (conversation.status === "CLOSED") {
     return { message: "Esta conversa foi encerrada." };
   }
   if (conversation.status !== "WITH_AGENT") {
-    return { message: "Esta conversa está com um analista." };
+    return { message: "Um analista vai continuar o atendimento por aqui." };
   }
-  if (conversation.remainingMessages === 0) {
+  if (conversation.remainingMessages === 0 && conversation.messageLimit) {
     return {
       message: `Você chegou ao limite de ${conversation.messageLimit} mensagens nesta conversa.`,
       allowsDrafts: true,
@@ -224,23 +245,33 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
       const items = ticketDraft ? supersedePending(state.items) : state.items;
       return {
         ...state,
-        items: [
-          ...items,
-          agentItem(event.id, message.content, trailSteps(message.trace.actions), {
-            // Com rascunho, o seletor some: a proposta é o próximo passo.
-            lookup: ticketDraft ? null : ticketLookup,
-            draft: ticketDraft
-              ? {
-                  data: ticketDraft,
-                  values: initialDraftValues(ticketDraft),
-                  status: "pending",
-                  failure: null,
-                  failedAction: null,
-                }
-              : null,
-            quickReplies,
-          }),
-        ],
+        items: withTransferEvent(
+          [
+            ...items,
+            agentItem(
+              event.id,
+              message.content,
+              trailSteps(message.trace.actions),
+              {
+                // Com rascunho, o seletor some: a proposta é o próximo passo.
+                lookup: ticketDraft ? null : ticketLookup,
+                draft: ticketDraft
+                  ? {
+                      data: ticketDraft,
+                      values: initialDraftValues(ticketDraft),
+                      status: "pending",
+                      failure: null,
+                      failedAction: null,
+                    }
+                  : null,
+                quickReplies,
+              },
+            ),
+          ],
+          conversation.status,
+          event.id,
+          message.createdAt,
+        ),
         conversationId: conversation.id,
         count: conversation.messageCount,
         limit: conversation.messageLimit,
@@ -302,14 +333,30 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
       };
 
     case "draftConfirmed": {
-      const { message, ticket } = event.result;
-      return finishDraft(
+      const { message, ticket, conversation } = event.result;
+      const finished = finishDraft(
         state,
         "confirmed",
-        agentItem(event.id, message.content, trailSteps(message.trace.actions), {
-          ticket,
-        }),
+        agentItem(
+          event.id,
+          message.content,
+          trailSteps(message.trace.actions),
+          {
+            ticket,
+          },
+        ),
       );
+      if (!conversation || finished === state) return finished;
+      return {
+        ...finished,
+        items: withTransferEvent(
+          finished.items,
+          conversation.status,
+          event.id,
+          message.createdAt,
+        ),
+        lock: lockFor(conversation) ?? finished.lock,
+      };
     }
 
     case "draftCancelled": {

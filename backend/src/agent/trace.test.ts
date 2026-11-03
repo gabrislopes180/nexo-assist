@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { TicketLookupResult, TicketSummary } from "../shared/chat.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import type { DraftExecution } from "./tools/turn-recorder.js";
-import { relatedCodeFrom, windowExpiredText } from "./trace.js";
+import { knownCodesFrom, overdueOfferCodeFrom, overdueOfferText, relatedCodeFrom, windowExpiredText } from "./trace.js";
 import { actionsFrom, CONFIRMATION_REPLY, citesOnlyKnownTickets, claimsFalseAction, isBareConfirmation, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
 
 const ticket = (code: string, overrides: Partial<TicketSummary> = {}): TicketSummary => ({
@@ -115,6 +115,12 @@ describe("claimsFalseAction", () => {
       "Chamado reaberto com sucesso.",
       "Pronto, o INC-12 foi reaberto.",
       "O INC-12 já foi reaberto",
+      "Transferi você para um analista.",
+      "Chamei um analista para você.",
+      "A conversa foi transferida.",
+      "Transferido!",
+      "Você foi transferido para um analista.",
+      "O analista já foi acionado.",
     ]) {
       assert.equal(claimsFalseAction(text), true, text);
     }
@@ -132,9 +138,34 @@ describe("claimsFalseAction", () => {
   });
 
   it("não acusa orientação nem dado do chamado", () => {
-    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "O chamado foi criado em 28/10.", "Seu chamado está aberto e aguardando analista.", "Confirme o código do chamado, por favor.", "Você confirma que o erro é 809?", "Não, eu não criei nada.", "Não o atualizei.", "O chamado foi reaberto em 30/10.", "Não reabri nada.", "Seu chamado foi aberto há 3 dias.", "O chamado foi reaberto pela analista ontem.", "Seu chamado reaberto INC-12 está em andamento.", "Abri o notebook e nada.", "Quer abrir um chamado?", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
+    for (const text of ["Para confirmar, use o botão Confirmar.", "Quer que eu prepare o complemento?", "O chamado foi registrado em 28/10.", "O chamado foi criado em 28/10.", "Seu chamado está aberto e aguardando analista.", "Confirme o código do chamado, por favor.", "Você confirma que o erro é 809?", "Não, eu não criei nada.", "Não o atualizei.", "O chamado foi reaberto em 30/10.", "Não reabri nada.", "Seu chamado foi aberto há 3 dias.", "O chamado foi reaberto pela analista ontem.", "Seu chamado reaberto INC-12 está em andamento.", "Quer que eu chame um analista?", "Não transferi a conversa.", "Seu INC-7 foi transferido para a fila de Redes.", "A licença foi transferida para o novo notebook.", "Abri o notebook e nada.", "Quer abrir um chamado?", "Inclui o notebook da filial.", "O INC-1 está em atendimento."]) {
       assert.equal(claimsFalseAction(text), false, text);
     }
+  });
+});
+
+describe("overdueOfferCodeFrom", () => {
+  it("lê o código da oferta na última resposta", () => {
+    assert.equal(overdueOfferCodeFrom(["Antes.", `O INC-20311 está atrasado. ${overdueOfferText("INC-20311", true)}`]), "INC-20311");
+    assert.equal(overdueOfferCodeFrom([`Status ok. ${overdueOfferText("INC-20311")}`]), "INC-20311");
+  });
+
+  it("ignora oferta antiga, sem código ou com mais de um código", () => {
+    assert.equal(overdueOfferCodeFrom([overdueOfferText("INC-1"), "Outra resposta."]), null);
+    assert.equal(overdueOfferCodeFrom(["Quer que eu chame um analista?"]), null);
+    assert.equal(overdueOfferCodeFrom(["INC-1 e INC-2. Quer que eu chame um analista?"]), null);
+  });
+});
+
+describe("knownCodesFrom", () => {
+  it("conta códigos que o agent trouxe e ignora os que só repetiu do usuário", () => {
+    const history = [
+      { authorType: "EMPLOYEE", content: "E o INC-99999?" },
+      { authorType: "AGENT", content: "Não encontrei o INC-99999. Seus chamados: INC-20311." },
+      { authorType: "EMPLOYEE", content: "Ok, e o INC-20311?" },
+      { authorType: "AGENT", content: "O INC-20311 está em atendimento." },
+    ];
+    assert.deepEqual(knownCodesFrom(history), ["INC-20311"]);
   });
 });
 
@@ -244,7 +275,7 @@ describe("parseDecision", () => {
 describe("composeReply", () => {
   it("usa os campos da LLM quando a citação confere", () => {
     const reply = compose({ executions: [single] });
-    assert.equal(reply?.content, decision.content);
+    assert.ok(reply?.content.startsWith(decision.content));
     assert.equal(reply?.trace.confidence, "HIGH");
     assert.equal(reply?.ticketLookup, single);
     assert.equal(agentTraceSchema.safeParse(reply?.trace).success, true);
@@ -336,7 +367,7 @@ describe("composeReply", () => {
     it("frase com conteúdo segue o fluxo normal", () => {
       const reply = compose({ message: "confirmo que o problema continua no INC-20311", decision: { ...decision, content: "O INC-20311 segue aberto." }, executions: [single] });
       assert.equal(reply?.ticketLookup, single);
-      assert.equal(reply?.content, "O INC-20311 segue aberto.");
+      assert.ok(reply?.content.startsWith("O INC-20311 segue aberto."));
     });
   });
 
@@ -477,7 +508,7 @@ describe("composeReply", () => {
 
   it("sem decisão, com consulta, usa template e intent CHECK_TICKET", () => {
     const reply = compose({ decision: null, fallbackText: '{"content": "trunc', executions: [single] });
-    assert.equal(reply?.content, templateFor(single));
+    assert.equal(reply?.content, `${templateFor(single)} Quer que eu chame um analista?`);
     assert.equal(reply?.trace.intent, "CHECK_TICKET");
   });
 

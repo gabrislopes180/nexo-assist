@@ -8,7 +8,10 @@ import { DRAFT_COMPLEMENT_TOOL } from "./tools/draft-complement.js";
 import { AFFECTED_QUESTION, AFFECTED_QUICK_REPLIES, DRAFT_TICKET_TOOL } from "./tools/draft-ticket.js";
 import { SEARCH_MY_OPEN_TICKETS_TOOL } from "./tools/search-my-open-tickets.js";
 import { DRAFT_REOPEN_TOOL } from "./tools/draft-reopen.js";
-import type { DraftExecution, ReopenBlock } from "./tools/turn-recorder.js";
+import { isBareConfirmation } from "./confirmation.js";
+import { declinesPerson } from "./tools/handoff-intent.js";
+import { TRANSFER_TO_ANALYST_TOOL } from "./tools/transfer-to-analyst.js";
+import type { DraftExecution, HandoffExecution, ReopenBlock } from "./tools/turn-recorder.js";
 
 /** O que a LLM preenche. `trace.actions` e `ticketLookup` ficam de fora: saem das execuções reais. */
 export const llmDecisionSchema = z.object({
@@ -38,6 +41,11 @@ export type ReplyInput = {
   fallbackText: string;
   executions: readonly TicketLookupResult[];
   drafts: readonly DraftExecution[];
+  handoffs?: readonly HandoffExecution[];
+  /** A última resposta do agent ofereceu analista: "Sim, confirmo" responde à oferta, não a um rascunho. */
+  overdueOfferActive?: boolean;
+  /** O usuário recusou analista nesta mensagem ou na troca anterior: sem nova oferta. */
+  suppressOverdueOffer?: boolean;
 };
 
 function jsonFrom(text: string): unknown {
@@ -68,30 +76,7 @@ export function citesOnlyKnownTickets(content: string, lookup: TicketLookupResul
 export const CONFIRMATION_REPLY =
   "Mensagem de texto não confirma nada, e nada foi gravado. Se há um rascunho na tela, use o botão dele; se não, diga o código do chamado e o que quer acrescentar.";
 
-const CONFIRMATION_WORDS: ReadonlySet<string> = new Set([
-  "confirmo",
-  "confirma",
-  "confirmar",
-  "confirme",
-  "confirmado",
-  "confirmada",
-  "confirmei",
-  "gravar",
-  "grava",
-  "grave",
-  "salvar",
-  "salva",
-  "salve",
-]);
-const CONFIRMATION_FILLERS: ReadonlySet<string> = new Set(
-  "ok okay sim certo beleza blz pode por favor pf eu ja entao isso tudo ai o a esse este complemento rascunho".split(" "),
-);
-
-/** Lista fechada de palavras: qualquer conteúdo a mais ("confirmo que o problema continua") segue o fluxo normal. */
-export function isBareConfirmation(message: string): boolean {
-  const words = normalizeSearchText(message).match(/[\p{L}\p{N}]+/gu) ?? [];
-  return words.some((word) => CONFIRMATION_WORDS.has(word)) && words.every((word) => CONFIRMATION_WORDS.has(word) || CONFIRMATION_FILLERS.has(word));
-}
+export { isBareConfirmation };
 
 const DONE = "(?:aberto|aberta|reaberto|reaberta|registrado|registrada|criado|criada|enviado|enviada|gravado|gravada|salvo|salva)";
 /**
@@ -101,7 +86,15 @@ const DONE = "(?:aberto|aberta|reaberto|reaberta|registrado|registrada|criado|cr
 const NOT_A_DATE = "(?!\\s+(?:em|há|pel[oa]s?|ontem|hoje|no\\s+dia|está|que|(?:INC|REQ)-\\d+)(?![\\p{L}\\d]))";
 const FALSE_ACTION = new RegExp(
   [
-    "complementei|adicionei|acrescentei|incluí|registrei|atualizei|gravei|anotei|salvei|alterei|editei|criei|enviei|encaminhei|reabri",
+    "complementei|adicionei|acrescentei|incluí|registrei|atualizei|gravei|anotei|salvei|alterei|editei|criei|enviei|encaminhei|reabri|transferi",
+    "vou\\s+(?:te\\s+|lhe\\s+)?(?:transferir|encaminhar|chamar\\s+(?:um|o|a|uma)\\s+analista)",
+    // Só a conversa ou a própria pessoa: "o INC-7 foi transferido para a fila de Redes" é dado do chamado.
+    "conversa\\s+(?:já\\s+)?(?:foi\\s+)?transferida",
+    "(?:te|você|voce)\\s+(?:já\\s+)?(?:foi\\s+)?transferid[oa]",
+    "^\\s*transferid[oa]",
+    "chamei\\s+(?:um|o|a|uma)\\s+analista",
+    "conversa\\s+(?:já\\s+)?foi\\s+transferida",
+    "analista\\s+(?:já\\s+)?(?:foi|está\\s+sendo)\\s+(?:acionad|chamad|avisad)[oa]",
     "preparei\\s+o\\s+(?:complemento|rascunho)",
     "abri\\s+(?:o|um|seu|novo)\\s+(?:novo\\s+)?chamado",
     "complemento\\s+(?:já\\s+)?(?:foi|está)\\s+\\p{L}+",
@@ -195,7 +188,23 @@ function draftAction(execution: DraftExecution): AgentAction {
   }
 }
 
-export function actionsFrom(executions: readonly TicketLookupResult[], drafts: readonly DraftExecution[] = []): AgentAction[] {
+const HANDOFF_ACCEPTED_SUMMARY = "Transferência para analista proposta; o backend move a conversa ao gravar.";
+const HANDOFF_DROPPED_SUMMARY = "Transferência descartada: mensagem fora de escopo; a conversa continua com o agent.";
+
+/** `dropped`: a proposta era válida, mas o turno a descartou (fora de escopo). Nunca aparece como SUCCESS. */
+function handoffAction(execution: HandoffExecution, dropped: boolean): AgentAction {
+  if (execution.outcome === "REJECTED") return { tool: TRANSFER_TO_ANALYST_TOOL, summary: HANDOFF_REJECTION_REASON[execution.problem], status: "SKIPPED" };
+  return dropped
+    ? { tool: TRANSFER_TO_ANALYST_TOOL, summary: HANDOFF_DROPPED_SUMMARY, status: "SKIPPED" }
+    : { tool: TRANSFER_TO_ANALYST_TOOL, summary: HANDOFF_ACCEPTED_SUMMARY, status: "SUCCESS" };
+}
+
+export function actionsFrom(
+  executions: readonly TicketLookupResult[],
+  drafts: readonly DraftExecution[] = [],
+  handoffs: readonly HandoffExecution[] = [],
+  handoffDropped = false,
+): AgentAction[] {
   return [
     ...executions.map(({ outcome }): AgentAction => ({
       tool: SEARCH_MY_OPEN_TICKETS_TOOL,
@@ -203,6 +212,7 @@ export function actionsFrom(executions: readonly TicketLookupResult[], drafts: r
       status: outcome === "UNAVAILABLE" ? "ERROR" : "SUCCESS",
     })),
     ...drafts.map(draftAction),
+    ...handoffs.map((execution) => handoffAction(execution, handoffDropped)),
   ];
 }
 
@@ -228,7 +238,7 @@ function traceOf(decision: LlmDecision | null, lookup: TicketLookupResult | null
 const NO_TICKET_OUTCOMES: ReadonlySet<string> = new Set(["NO_MATCH", "NO_OPEN_TICKETS"]);
 
 const FALSE_ACTION_REPLY =
-  "Nada foi alterado nem criado. Para abrir um chamado, conte o que aconteceu; para complementar, diga o código e o que quer acrescentar. A confirmação é feita pelo botão na tela.";
+  "Nada foi alterado, criado nem transferido. Para abrir um chamado, conte o que aconteceu; para complementar, diga o código e o que quer acrescentar. A confirmação é feita pelo botão na tela.";
 const DRAFT_FAILURE: Record<"TICKET_NOT_AVAILABLE" | "SERVICE_UNAVAILABLE", { content: string; reason: string }> = {
   TICKET_NOT_AVAILABLE: {
     content: "Não consegui preparar o complemento: esse chamado não está entre os seus chamados abertos. Se o problema voltou num chamado encerrado, me diga o código que eu vejo se dá para reabrir.",
@@ -354,10 +364,79 @@ function createTicketBlock(execution: DraftExecution | undefined): { content: st
   }
 }
 
+const HANDOFF_REPLY = "Transferi a conversa para um analista. Ele vai continuar o atendimento por aqui.";
+const HANDOFF_REJECTED_REPLY = "Não transferi a conversa. Posso continuar te ajudando por aqui; se quiser falar com um analista, é só pedir.";
+const HANDOFF_REJECTION_REASON: Record<Extract<HandoffExecution, { outcome: "REJECTED" }>["problem"], string> = {
+  OVERDUE_NOT_ACCEPTED: "Transferência por prazo vencido sem oferta aceita; a conversa continua com o agent.",
+  OFFER_DECLINED: "O usuário recusou a oferta de analista; a conversa continua com o agent.",
+  DECLINED: "O usuário disse que não quer falar com analista; a conversa continua com o agent.",
+  NOT_REQUESTED: "Transferência recusada: o usuário não pediu analista; a conversa continua com o agent.",
+  UNKNOWN_TICKET_CODE: "Resumo citou chamado não devolvido pelas ferramentas; a conversa continua com o agent.",
+  UNAVAILABLE: "Transferência inválida; a conversa continua com o agent.",
+};
+
+export const OVERDUE_QUICK_REPLIES = ["Falar com um analista", "Não, obrigado"];
+const OVERDUE_QUESTION = "Quer que eu chame um analista?";
+
+/** Oferta da tela 03. O código vai no texto quando o modelo não o citou: é por ele que a aceitação é validada. */
+export function overdueOfferText(code: string, alreadyCited = false): string {
+  return alreadyCited ? OVERDUE_QUESTION : `O prazo do ${code} venceu. ${OVERDUE_QUESTION}`;
+}
+
+/** Códigos que o agent trouxe na conversa. Um código que o usuário escreveu antes e o agent só repetiu não conta. */
+export function knownCodesFrom(history: readonly { authorType: string; content: string }[]): string[] {
+  const fromEmployee = new Set<string>();
+  const known = new Set<string>();
+  for (const { authorType, content } of history) {
+    for (const code of ticketCodesIn(content)) {
+      if (authorType === "EMPLOYEE") {
+        if (!known.has(code)) fromEmployee.add(code);
+      } else if (authorType === "AGENT" && !fromEmployee.has(code)) {
+        known.add(code);
+      }
+    }
+  }
+  return [...known];
+}
+
+/** Código oferecido na última resposta do agent, se ela terminou com a oferta e cita um único chamado. */
+export function overdueOfferCodeFrom(agentMessages: readonly string[]): string | null {
+  const last = agentMessages.at(-1) ?? "";
+  if (!last.endsWith(OVERDUE_QUESTION)) return null;
+  const codes = new Set(ticketCodesIn(last));
+  return codes.size === 1 ? ([...codes][0] ?? null) : null;
+}
+
+/** Chamado vencido num único resultado: o agent oferece o analista, não transfere sozinho. */
+function withOverdueOffer(reply: AgentTurnResult, suppress: boolean): AgentTurnResult {
+  // A pergunta só pode vir do código: escrita pelo modelo, ela viraria uma oferta falsa no turno seguinte.
+  const stripped = reply.content.split(OVERDUE_QUESTION).join("").replace(/\s+/g, " ").trim();
+  const lookup = reply.ticketLookup;
+  const content = stripped === "" && lookup ? templateFor(lookup) : stripped;
+  // Depois de uma recusa, não oferecer de novo.
+  if (suppress || lookup?.outcome !== "SINGLE_MATCH" || !lookup.tickets[0].overdue) return { ...reply, content };
+  const { code } = lookup.tickets[0];
+  const cited = ticketCodesIn(content).includes(code.toUpperCase());
+  return { ...reply, content: `${content} ${overdueOfferText(code, cited)}`, quickReplies: OVERDUE_QUICK_REPLIES };
+}
+
+/** Na troca anterior, o agent ofereceu analista e o usuário recusou. */
+export function offerDeclinedIn(history: readonly { authorType: string; content: string }[]): boolean {
+  const [offer, answer, reply] = history.slice(-3);
+  return (
+    offer?.authorType === "AGENT" &&
+    offer.content.endsWith(OVERDUE_QUESTION) &&
+    answer?.authorType === "EMPLOYEE" &&
+    declinesPerson(answer.content) &&
+    reply?.authorType === "AGENT"
+  );
+}
+
 /** Null: não há resposta aproveitável, e o runner trata como agent indisponível. */
-export function composeReply({ message, decision, fallbackText, executions, drafts }: ReplyInput): AgentTurnResult | null {
+export function composeReply({ message, decision, fallbackText, executions, drafts, handoffs = [], overdueOfferActive = false, suppressOverdueOffer = false }: ReplyInput): AgentTurnResult | null {
   const lastExecution = executions.at(-1) ?? null;
-  if (isBareConfirmation(message)) {
+  // Com a oferta como última pergunta, a confirmação é a resposta a ela; um rascunho anterior segue pendente.
+  if (isBareConfirmation(message) && !overdueOfferActive) {
     // A instrução não impede o modelo de chamar a tool: o que rodou fica no trace, mas não vira seletor nem proposta.
     return {
       content: CONFIRMATION_REPLY,
@@ -365,7 +444,7 @@ export function composeReply({ message, decision, fallbackText, executions, draf
         understood: "O usuário tentou confirmar por mensagem.",
         // Pode ser complemento ou abertura: o turno não sabe qual rascunho está na tela.
         intent: "OTHER",
-        actions: actionsFrom(executions, drafts),
+        actions: actionsFrom(executions, drafts, handoffs, true),
         confidence: "HIGH",
         reason: "Confirmação só vale pelo botão; resultados de tools do turno não foram usados.",
       },
@@ -377,7 +456,20 @@ export function composeReply({ message, decision, fallbackText, executions, draf
   const outOfScope = decision?.intent === "OUT_OF_SCOPE";
   // Fora de escopo, a consulta fica só no trace: o modelo às vezes chama a tool e a tela mostraria o seletor.
   const ticketLookup = outOfScope ? null : lastExecution;
-  const trace = traceOf(decision, lastExecution, actionsFrom(executions, drafts));
+  const trace = traceOf(decision, lastExecution, actionsFrom(executions, drafts, handoffs, outOfScope));
+
+  // Transferência vale mais que rascunho: o backend descarta o rascunho e move a conversa.
+  const lastHandoff = outOfScope ? undefined : handoffs.at(-1);
+  if (lastHandoff?.outcome === "ACCEPTED") {
+    return {
+      content: HANDOFF_REPLY,
+      trace: { ...trace, intent: "TALK_TO_ANALYST" },
+      ticketLookup: null,
+      ticketDraft: null,
+      quickReplies: null,
+      handoff: lastHandoff.proposal,
+    };
+  }
 
   // Vale a última execução: um bloqueio depois de uma proposta a cancela.
   const block = outOfScope ? null : createBlock(drafts.at(-1));
@@ -399,16 +491,20 @@ export function composeReply({ message, decision, fallbackText, executions, draf
   }
 
   const raw = decision ? decision.content.trim() : fallbackText.trim();
-  if (raw === "") return null;
+  // Transferência recusada fica só no trace; a resposta do turno segue. Sem resposta, explica que não transferiu.
+  if (raw === "") {
+    if (lastHandoff?.outcome !== "REJECTED") return null;
+    return { content: HANDOFF_REJECTED_REPLY, trace: { ...trace, confidence: "LOW" }, ticketLookup, ticketDraft: null, quickReplies: null };
+  }
 
   const draft = decision ? raw : usablePlainText(raw);
   if (draft === "") {
     if (!ticketLookup) return null;
-    return { content: templateFor(ticketLookup), trace, ticketLookup, ticketDraft: null };
+    return withOverdueOffer({ content: templateFor(ticketLookup), trace, ticketLookup, ticketDraft: null }, suppressOverdueOffer);
   }
 
   const rejection = rejectionOf(draft, ticketLookup);
-  if (rejection === null) return { content: draft, trace, ticketLookup, ticketDraft: null };
+  if (rejection === null) return withOverdueOffer({ content: draft, trace, ticketLookup, ticketDraft: null }, suppressOverdueOffer);
   return {
     content: outOfScope ? OUT_OF_SCOPE_REPLY : rejection.content,
     // `understood` pode repetir o que foi rejeitado, como um chamado inventado.

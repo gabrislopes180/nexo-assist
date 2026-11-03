@@ -17,10 +17,12 @@ describe("proxy", () => {
     ["/", undefined],
     ["/console", undefined],
     ["/console/employee", undefined],
+    ["/console/analyst", undefined],
     ["/profile", undefined],
     ["/", ""],
     ["/console", ""],
     ["/console/employee", ""],
+    ["/console/analyst", ""],
     ["/profile", ""],
   ])("redireciona %s com cookie %j para /login", (path, cookie) => {
     const response = run(path, cookie);

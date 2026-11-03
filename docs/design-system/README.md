@@ -119,6 +119,7 @@ Os componentes ficam em `window.NexoAssist` e precisam do React 18 na página. S
 - Falha de envio: linha em `caption` `danger-text` sob a bolha do funcionário, que não muda de cor, com "Tentar de novo" quando repetir faz sentido.
 - Composer bloqueado no chat: aviso neutro e "Iniciar nova conversa" no lugar do contador (ver `components/Composer.md`).
 - Rascunho no chat (abrir, complementar e reabrir chamado): edição dentro do card, estados depois de confirmar ou cancelar e linha de falha no card (ver `components/TicketCard.md`). O campo de várias linhas (`TextArea`) segue o `TextField`, sem ícone.
+- Console do analista: carregando ("Carregando conversas…", com o `StatusBadge` `info` pulsante), vazio por filtro e por busca, erro com "Tentar de novo", e o composer bloqueado com um texto por status ("O Nexo Assist está atendendo esta conversa", "Conversa encerrada"). Abaixo de 1280px, o painel de chamados abre num `Sheet` pelo botão "Ver chamados".
 - `profile-width`: coluna da página Meu perfil, medida em `screens/06-meu-perfil.png`.
 - `on-ink-surface`, `login-form-width` e `login-preview-width`: valores medidos em `screens/01-login.png`. A borda do card de prévia e a bolha do agent reaproveitam `on-ink-rule`.
 

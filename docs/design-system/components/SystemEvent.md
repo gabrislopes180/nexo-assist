@@ -4,3 +4,4 @@ Marco no meio da conversa do console: uma linha com o evento ("Transferida para 
 
 - O consumidor fornece o texto e o `icon`: `arrow-right-left` para transferência, `headset` para quando o analista assume.
 - Registre aqui toda troca de quem atende, para o histórico ficar legível.
+- No chat do funcionário, a transferência aparece como "Transferida para um analista · 14:20" (`arrow-right-left`), logo depois da resposta que transferiu. O texto usa `caption` com peso 500: a referência usa 12px, que não tem token.

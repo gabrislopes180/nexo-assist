@@ -44,7 +44,9 @@ describe("ticketDraftSchema", () => {
   });
 
   it("recusa reabertura sem motivo ou com status desconhecido", () => {
-    expect(ticketDraftSchema.safeParse({ ...reopen, reason: "" }).success).toBe(false);
+    expect(ticketDraftSchema.safeParse({ ...reopen, reason: "" }).success).toBe(
+      false,
+    );
     expect(
       ticketDraftSchema.safeParse({
         ...reopen,
@@ -61,7 +63,12 @@ describe("ticketDraftSchema", () => {
   });
 
   it("aceita o rascunho de complemento", () => {
-    const draft = { id: "d2", kind: "COMPLEMENT", ticket, content: "Reiniciei." };
+    const draft = {
+      id: "d2",
+      kind: "COMPLEMENT",
+      ticket,
+      content: "Reiniciei.",
+    };
     expect(ticketDraftSchema.parse(draft)).toMatchObject({
       kind: "COMPLEMENT",
       content: "Reiniciei.",
@@ -74,9 +81,12 @@ describe("ticketDraftSchema", () => {
   });
 
   it("recusa kind e abrangência desconhecidos", () => {
-    expect(ticketDraftSchema.safeParse({ ...create, kind: "REOPEN" }).success).toBe(false);
     expect(
-      ticketDraftSchema.safeParse({ ...create, affectedScope: "WORLD" }).success,
+      ticketDraftSchema.safeParse({ ...create, kind: "REOPEN" }).success,
+    ).toBe(false);
+    expect(
+      ticketDraftSchema.safeParse({ ...create, affectedScope: "WORLD" })
+        .success,
     ).toBe(false);
   });
 });
