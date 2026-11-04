@@ -67,6 +67,7 @@ describe("chatReducer", () => {
 
   it("começa vazio, com o limite padrão", () => {
     expect(initial).toEqual({
+      initialized: false,
       items: [],
       count: 0,
       limit: 30,
@@ -105,6 +106,7 @@ describe("chatReducer", () => {
       content: "Resposta",
       createdAt: "2026-10-16T17:20:00.000Z",
       steps: [{ label: "consultou seus chamados", failed: false }],
+      trace: result().message?.trace,
       sources: [],
       lookup: null,
       selectedCode: null,
@@ -249,6 +251,6 @@ describe("chatReducer", () => {
   it("reset volta ao estado inicial", () => {
     const state = chatReducer(succeeded(sent(initial)), { type: "reset" });
 
-    expect(state).toEqual(initial);
+    expect(state).toEqual({ ...initial, initialized: true });
   });
 });

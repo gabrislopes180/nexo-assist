@@ -4,6 +4,8 @@ import { openEventStream, type StreamStatus } from "@/shared/api/event-stream";
 interface UseEventStreamOptions {
   url: string;
   enabled: boolean;
+  /** Trocar conversa fecha a inscrição anterior e reinicia o cursor desse contexto. */
+  scopeKey?: string;
   /** Recebe o JSON parseado; os nomes dos eventos não podem mudar entre renders. */
   events: Record<string, (data: unknown) => void>;
   onClosedByServer: () => void;
@@ -22,6 +24,7 @@ interface UseEventStreamOptions {
 export function useEventStream({
   url,
   enabled,
+  scopeKey,
   events,
   onClosedByServer,
 }: UseEventStreamOptions): StreamStatus {
@@ -29,6 +32,7 @@ export function useEventStream({
   // O id vale só para a mesma URL; trocar de stream começa do zero.
   const cursorRef = useRef<{ url: string; id: string } | null>(null);
   const eventTypes = Object.keys(events).sort().join("|");
+  const scope = `${url}:${scopeKey ?? ""}`;
 
   const dispatch = useEffectEvent((type: string, data: unknown) => {
     events[type]?.(data);
@@ -47,9 +51,9 @@ export function useEventStream({
     const stream = openEventStream({
       url,
       events: handlers,
-      lastEventId: cursor?.url === url ? cursor.id : null,
+      lastEventId: cursor?.url === scope ? cursor.id : null,
       onLastEventId: (id) => {
-        cursorRef.current = { url, id };
+        cursorRef.current = { url: scope, id };
       },
       onStatus: setStatus,
       onClosedByServer: () => closedByServer(),
@@ -58,7 +62,7 @@ export function useEventStream({
       stream.close();
       setStatus("connecting");
     };
-  }, [url, enabled, eventTypes]);
+  }, [url, scope, enabled, eventTypes]);
 
   return enabled ? status : "down";
 }

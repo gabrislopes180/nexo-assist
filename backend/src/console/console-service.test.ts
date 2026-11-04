@@ -10,7 +10,7 @@ const NOW = new Date("2026-11-03T12:00:00.000Z");
 const analyst: SessionUser = { id: "a1", name: "Bruno Martins", email: "b@teste.example", role: "ANALYST", department: null };
 const reject = () => Promise.reject(new Error("não usado aqui"));
 const conversations = {} as ConversationService;
-const queries: ConversationQueries = { list: reject, find: reject, messages: reject, ownedByEmployee: reject };
+const queries: ConversationQueries = { list: reject, find: reject, messages: reject, ownedByEmployee: reject, activeForEmployee: reject };
 const tickets: OwnerTicketReader = { listOwnerTickets: reject };
 
 describe("ConsoleService", () => {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
-import type { ConfirmDraftRequest, HandoffProposal, ProposedTicketDraft } from "../shared/chat.js";
+import type { ConfirmDraftRequest, HandoffProposal, ProposedTicketDraft, TicketLookupResult } from "../shared/chat.js";
 import type { ConfirmableDraft } from "../shared/conversation-draft.js";
 import { noopPublisher, type ChangePublisher, type ConversationChange } from "../shared/conversation-events.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
@@ -18,6 +18,7 @@ import {
   type TimelineMessage,
 } from "./timeline.js";
 import { transferToAnalyst } from "./handoff.js";
+import { toDraftView } from "./draft-view.js";
 import { cancelPendingDraft, confirmPendingDraft, readPendingDraft, type ConfirmedDraft, type StoredAgentMessage } from "./ticket-draft.js";
 
 export class ConversationMessageLimitReachedError extends Error {
@@ -64,6 +65,8 @@ export type AgentReply = {
   trace: AgentTrace;
   /** Sem rascunho, o anterior continua valendo; um novo o substitui. */
   ticketDraft?: ProposedTicketDraft | null;
+  ticketLookup?: TicketLookupResult | null;
+  quickReplies?: string[] | null;
   /** Transfere na mesma transação; o rascunho do turno e o pendente são descartados. */
   handoff?: HandoffProposal | null;
   now: Date;
@@ -253,12 +256,19 @@ export function createConversationService(
       return start;
     },
 
-    async completeTurn(reservation, { content, trace, ticketDraft, handoff, now }) {
+    async completeTurn(reservation, { content, trace, ticketDraft, ticketLookup, quickReplies, handoff, now }) {
       const { conversationId } = reservation;
       const draft = ticketDraft && !handoff ? toPendingDraft(ticketDraft, now) : null;
+      const storedTrace: AgentTrace = ticketLookup || quickReplies || draft
+        ? { ...trace, attachments: {
+            ticketLookup: ticketLookup ?? null,
+            quickReplies: handoff ? null : quickReplies ?? null,
+            ticketDraft: draft && ticketDraft ? toDraftView(ticketDraft, draft.draftId, now) : null,
+          } }
+        : trace;
       const { ownerId, ...stored } = await client.$transaction(async (tx) => {
         const message = await tx.message.create({
-          data: { conversationId, authorType: "AGENT", authorId: null, content, trace, createdAt: now },
+          data: { conversationId, authorType: "AGENT", authorId: null, content, trace: storedTrace, createdAt: now },
           select: { id: true, createdAt: true },
         });
         // Condicional: outra operação (confirmação CRITICAL, outra aba) pode ter transferido durante a LLM.
@@ -278,7 +288,7 @@ export function createConversationService(
           ownerId,
           id: message.id,
           content,
-          trace,
+          trace: storedTrace,
           createdAt: message.createdAt,
           draftId: draft?.draftId ?? null,
           conversationStatus: status,

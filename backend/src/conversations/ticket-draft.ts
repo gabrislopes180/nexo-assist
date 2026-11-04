@@ -188,6 +188,7 @@ async function confirmComplement(scope: TurnScope, draft: ComplementDraft, conte
       actions: [{ tool: "addTicketComplement", summary: `Registrou o complemento no chamado ${code}.`, status: "SUCCESS" }],
       confidence: "HIGH",
       reason: "Confirmação explícita do rascunho pendente.",
+      attachments: { ticket },
     },
     scope.now,
   );
@@ -273,6 +274,7 @@ async function confirmCreation(scope: TurnScope, draft: CreateDraft, request: Cr
       ],
       confidence: "HIGH",
       reason: critical ? "Confirmação do rascunho; chamado crítico vai direto para um analista." : "Confirmação explícita do rascunho pendente.",
+      attachments: { ticket: toTicketSummary(ticket, scope.now) },
     },
     scope.now,
   );
@@ -350,6 +352,7 @@ async function confirmReopen(scope: TurnScope, draft: ReopenDraft, reason: strin
       ],
       confidence: "HIGH",
       reason: "Confirmação explícita do rascunho pendente.",
+      attachments: { ticket: toTicketSummary(ticket, scope.now) },
     },
     scope.now,
   );

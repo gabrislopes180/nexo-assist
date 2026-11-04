@@ -378,7 +378,7 @@ describe("chatReducer: rascunhos", () => {
       id: "a1",
       action: "confirm",
     });
-    expect(chatReducer(started, { type: "reset" })).toEqual(createInitialChatState());
+    expect(chatReducer(started, { type: "reset" })).toEqual({ ...createInitialChatState(), initialized: true });
   });
 });
 

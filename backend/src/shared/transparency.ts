@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageAttachmentsSchema } from "./chat.js";
 
 /**
  * Registro de transparência gravado em Message.trace (só mensagens do AGENT):
@@ -36,6 +37,8 @@ export const agentTraceSchema = z.strictObject({
   reason: z.string().min(1),
   /** Opcional: traces gravados antes da central de ajuda não têm o campo. */
   sources: z.array(agentSourceSchema).max(3).optional(),
+  /** Anexos históricos produzidos pelo servidor, sem novas chamadas à LLM. */
+  attachments: messageAttachmentsSchema.optional(),
 });
 
 export type AgentAction = z.infer<typeof agentActionSchema>;

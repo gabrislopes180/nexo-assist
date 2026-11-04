@@ -1,6 +1,7 @@
 import { CONVERSATION_MESSAGE_LIMIT, remainingMessages } from "../conversations/conversation-rules.js";
 import type { ConversationService, StoredAgentMessage, TurnReservation } from "../conversations/conversation-service.js";
 import type { ConversationQueries } from "../conversations/conversation-queries.js";
+import { toDraftView } from "../conversations/draft-view.js";
 import { toTimelineMessageView, type ConversationSnapshot, type TimelineMessage } from "../conversations/timeline.js";
 import { DraftKindMismatchError, TicketNotOpenError, TicketNotReopenableError } from "../conversations/ticket-draft.js";
 import {
@@ -10,6 +11,7 @@ import {
   type CancelDraftResponse,
   type ChatConversationView,
   type ChatConversationDetail,
+  type ActiveChatConversation,
   type ChatMessageView,
   type EmployeeMessageView,
   type ChatRequest,
@@ -17,12 +19,10 @@ import {
   type ConfirmDraftRequest,
   type ConfirmDraftResponse,
   type ProposedTicketDraft,
-  type TicketDraft,
 } from "../shared/chat.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import type { SessionUser } from "../shared/session.js";
 import { agentTraceSchema, type AgentAction, type AgentTrace } from "../shared/transparency.js";
-import { computeDueAt } from "../tickets/sla.js";
 import { capPriority } from "../tickets/ticket-rules.js";
 import {
   TicketServiceUnavailableError,
@@ -45,13 +45,14 @@ export type ChatService = {
   cancelDraft(actor: SessionUser, draftId: string): Promise<CancelDraftResponse>;
   /** Conversa do próprio funcionário com todas as mensagens; alheia ou inexistente é 404. */
   getConversation(actor: SessionUser, conversationId: string): Promise<ChatConversationDetail>;
+  getActiveConversation(actor: SessionUser): Promise<ActiveChatConversation>;
 };
 
 type ChatServiceDeps = {
   conversations: ConversationService;
   agentRunner: AgentRunner;
   tickets: TicketCodeReader & ResolvedTicketReader & TicketAvailability;
-  queries: Pick<ConversationQueries, "ownedByEmployee">;
+  queries: Pick<ConversationQueries, "ownedByEmployee" | "activeForEmployee">;
   now?: () => Date;
 };
 
@@ -91,14 +92,6 @@ const DRAFT_SUPERSEDED_BY_HANDOFF = {
 
 function withDiscardedDraft(trace: AgentTrace, action: AgentAction): AgentTrace {
   return { ...trace, actions: [...trace.actions, action], reason: "O rascunho proposto foi descartado na validação do backend." };
-}
-
-function toDraftView(proposal: ProposedTicketDraft, id: string, at: Date): TicketDraft {
-  if (proposal.kind === "COMPLEMENT") return { id, ...proposal };
-  // Mesmo cálculo de REOPENED em `applyTicketEvent`: nova janela pela prioridade original.
-  if (proposal.kind === "REOPEN") return { id, ...proposal, dueAtPreview: computeDueAt(proposal.ticket.priority, at).toISOString() };
-  const { priorityReason: _priorityReason, ...visible } = proposal;
-  return { id, ...visible, dueAtPreview: computeDueAt(proposal.priority, at).toISOString() };
 }
 
 function toMessageView(message: StoredAgentMessage): ChatMessageView {
@@ -218,11 +211,14 @@ export function createChatService({ conversations, agentRunner, tickets, queries
             ? withDiscardedDraft(trace.data, discarded.action)
             : { ...trace.data, actions: [...trace.data.actions, ...supersededDraft] };
         const at = now();
+        const replies = !discarded && !handoff && !handoffFailed && quickReplies.success ? quickReplies.data : null;
         const stored = await conversations.completeTurn(reservation, {
           content: handoffFailed ? HANDOFF_FAILED.content : discarded ? discarded.content : result.content,
           trace: replyTrace,
           ticketDraft,
           handoff,
+          ticketLookup: result.ticketLookup,
+          quickReplies: replies,
           now: at,
         });
         return {
@@ -238,7 +234,7 @@ export function createChatService({ conversations, agentRunner, tickets, queries
           message: toMessageView(stored),
           ticketLookup: result.ticketLookup,
           ticketDraft: ticketDraft && stored.draftId ? toDraftView(ticketDraft, stored.draftId, at) : null,
-          quickReplies: !discarded && !handoff && !handoffFailed && quickReplies.success ? quickReplies.data : null,
+          quickReplies: replies,
         };
       } catch (error) {
         await abort(reservation);
@@ -261,8 +257,15 @@ export function createChatService({ conversations, agentRunner, tickets, queries
 
     async getConversation(actor, conversationId) {
       assertEmployee(actor);
-      const { snapshot, messages } = await queries.ownedByEmployee(actor.id, conversationId);
-      return { conversation: toConversationView(snapshot), messages: messages.map(toTimelineMessageView) };
+      const { snapshot, messages, pendingDraft } = await queries.ownedByEmployee(actor.id, conversationId);
+      return { conversation: toConversationView(snapshot), messages: messages.map(toTimelineMessageView), pendingDraft: pendingDraft ?? null };
+    },
+
+    async getActiveConversation(actor) {
+      assertEmployee(actor);
+      const result = await queries.activeForEmployee(actor.id);
+      if (!result) return { conversation: null, messages: [], pendingDraft: null };
+      return { conversation: toConversationView(result.snapshot), messages: result.messages.map(toTimelineMessageView), pendingDraft: result.pendingDraft ?? null };
     },
 
     async cancelDraft(actor, draftId) {

@@ -5,7 +5,7 @@ export {
   systemEventIcon,
   type SystemEventIcon,
 } from "./lib/system-event-icon";
-export { agentMessageSchema, type AgentAction } from "./model/message";
+export { agentMessageSchema, type AgentAction, type AgentTrace } from "./model/message";
 export { messageCreatedEventSchema } from "./model/message-events";
 export {
   timelineMessageSchema,

@@ -1,5 +1,6 @@
 import { formatDayLabel, formatTime } from "@/shared/lib/format-date";
 import type { ConsoleMessageData } from "../model/console-message";
+import type { AgentTrace } from "../model/message";
 import { systemEventIcon, type SystemEventIcon } from "./system-event-icon";
 
 export type ConsoleTimelineItem =
@@ -15,6 +16,7 @@ export type ConsoleTimelineItem =
       time: string;
       dateTime: string;
       long: boolean;
+      trace: AgentTrace | null;
     }
   | { kind: "event"; key: string; icon: SystemEventIcon | null; label: string };
 
@@ -81,6 +83,7 @@ export function buildConsoleTimeline(
       showSender: from !== "client" && !grouped,
       grouped,
       text: message.content,
+      trace: message.authorType === "AGENT" ? message.trace ?? null : null,
       time: formatTime(message.createdAt),
       dateTime: message.createdAt,
       long: message.content.length > LONG_AT || message.content.includes("\n"),

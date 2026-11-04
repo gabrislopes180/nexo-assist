@@ -120,6 +120,16 @@ export type TicketDraft = z.infer<typeof ticketDraftSchema>;
 /** Inválidas ficam de fora da resposta: são só um atalho de digitação. */
 export const quickRepliesSchema = z.array(z.string().trim().min(1).max(60)).min(1).max(5);
 
+/** Snapshot do que foi mostrado, salvo no JSON da mensagem (não usa o chamado atual). */
+export const messageAttachmentsSchema = z.strictObject({
+  ticketLookup: ticketLookupResultSchema.nullable().optional(),
+  ticketDraft: ticketDraftSchema.nullable().optional(),
+  quickReplies: quickRepliesSchema.nullable().optional(),
+  ticket: ticketSummarySchema.nullable().optional(),
+});
+
+export type PendingDraftView = { messageId: string; draft: TicketDraft };
+
 /**
  * O texto confirmado é o que vale: a pessoa pode ajustar a proposta antes de confirmar.
  * Na criação, tipo, categoria e prioridade ficam travados no rascunho.
@@ -166,7 +176,15 @@ export type ChatConversationView = {
 export type EmployeeMessageView = { id: string; authorType: "EMPLOYEE"; content: string; createdAt: string };
 
 /** `GET /chat/conversations/:id`: polling e ressincronização do funcionário. */
-export type ChatConversationDetail = { conversation: ChatConversationView; messages: TimelineMessageView[] };
+export type ChatConversationDetail = {
+  conversation: ChatConversationView;
+  messages: TimelineMessageView[];
+  pendingDraft?: PendingDraftView | null;
+};
+
+export type ActiveChatConversation =
+  | ChatConversationDetail
+  | { conversation: null; messages: []; pendingDraft: null };
 
 export type ChatMessageView = {
   id: string;

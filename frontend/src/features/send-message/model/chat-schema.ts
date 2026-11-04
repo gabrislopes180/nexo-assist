@@ -56,10 +56,28 @@ export const cancelDraftResponseSchema = z.object({
   message: agentMessageSchema,
 });
 
+export const messageAttachmentsSchema = z.object({
+  ticketLookup: ticketLookupSchema.nullish(),
+  ticketDraft: ticketDraftSchema.nullish(),
+  quickReplies: z.array(z.string().min(1)).nullish(),
+  ticket: ticketSummarySchema.nullish(),
+});
+
+export const pendingDraftSchema = z.object({
+  messageId: z.string().min(1),
+  draft: ticketDraftSchema,
+});
+
 /** `GET /chat/conversations/:id`: ressincronização do funcionário. */
 export const chatConversationDetailSchema = z.object({
   conversation: conversationSchema,
   messages: z.array(timelineMessageSchema),
+  pendingDraft: pendingDraftSchema.nullish(),
+});
+
+/** Ausência explícita; falhas HTTP continuam sendo erros. */
+export const activeChatConversationSchema = chatConversationDetailSchema.extend({
+  conversation: conversationSchema.nullable(),
 });
 
 export type ChatResponse = z.infer<typeof chatResponseSchema>;
@@ -68,3 +86,4 @@ export type CancelDraftResponse = z.infer<typeof cancelDraftResponseSchema>;
 export type ChatConversationDetail = z.infer<
   typeof chatConversationDetailSchema
 >;
+export type ActiveChatConversation = z.infer<typeof activeChatConversationSchema>;

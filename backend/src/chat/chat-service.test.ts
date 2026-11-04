@@ -83,8 +83,8 @@ type ConversationReads = Pick<ConversationQueries, "ownedByEmployee">;
 const unusedQueries: ConversationReads = { ownedByEmployee: () => Promise.reject(new Error("não usado aqui")) };
 
 type ServiceDeps = Parameters<typeof createService>[0];
-const createChatService = (deps: Omit<ServiceDeps, "tickets" | "queries"> & Partial<Pick<ServiceDeps, "tickets" | "queries">>) =>
-  createService({ tickets: unusedTickets, queries: unusedQueries, ...deps });
+const createChatService = (deps: Omit<ServiceDeps, "tickets" | "queries"> & Partial<Pick<ServiceDeps, "tickets">> & { queries?: ConversationReads }) =>
+  createService({ tickets: unusedTickets, ...deps, queries: { activeForEmployee: () => Promise.resolve(null), ...(deps.queries ?? unusedQueries) } });
 
 describe("ChatService", () => {
   it("recusa quem não é funcionário antes de abrir o turno", async () => {

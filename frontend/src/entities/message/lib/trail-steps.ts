@@ -46,6 +46,10 @@ const TOOL_STEPS: Record<string, StepsByStatus> = {
   createTicket: { SUCCESS: done("criou o chamado") },
   reopenTicket: { SUCCESS: done("reabriu o chamado") },
   addTicketComplement: { SUCCESS: done("registrou o complemento") },
+  transferToAnalyst: {
+    SUCCESS: done("transferiu para um analista"),
+    ERROR: failed("não conseguiu transferir para um analista"),
+  },
 };
 
 export function trailSteps(actions: readonly AgentAction[]): TrailStep[] {

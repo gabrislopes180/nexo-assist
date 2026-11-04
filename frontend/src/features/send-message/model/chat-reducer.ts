@@ -8,7 +8,7 @@ import {
   stripSourceNote,
   systemEventIcon,
   trailSteps,
-  type AgentAction,
+  type AgentTrace,
   type ArticleSource,
   type SystemEventIcon,
   type TimelineMessage,
@@ -22,6 +22,7 @@ import {
   type TicketLookup,
   type TicketSummary,
 } from "@/entities/ticket";
+import { messageAttachmentsSchema, type ActiveChatConversation, type ChatConversationDetail } from "./chat-schema";
 import type {
   CancelDraftResponse,
   ChatResponse,
@@ -100,6 +101,7 @@ export type ChatItem =
       content: string;
       createdAt: string;
       steps: TrailStep[];
+      trace: AgentTrace | null;
       /** Artigos citados (`trace.sources`): viram cards abaixo da bolha. */
       sources: ArticleSource[];
       lookup: TicketLookup | null;
@@ -121,9 +123,11 @@ export type StreamInput =
       type: "resynced";
       conversation: Conversation;
       messages: TimelineMessage[];
+      pendingDraft?: ChatConversationDetail["pendingDraft"];
     };
 
 export interface ChatState {
+  initialized: boolean;
   items: ChatItem[];
   conversationId?: string;
   /** Null até a primeira resposta. */
@@ -143,6 +147,7 @@ export interface ChatState {
 }
 
 export type ChatEvent =
+  | { type: "hydrated"; snapshot: ActiveChatConversation }
   | { type: "sent"; id: string; text: string }
   | { type: "retried"; id: string }
   | { type: "succeeded"; result: ChatResponse }
@@ -157,10 +162,11 @@ export type ChatEvent =
   /** A conversa sumiu do backend (404 na ressincronização). */
   | { type: "conversationLost"; lock: ChatLock }
   | StreamInput
-  | { type: "reset" };
+  | { type: "reset"; recover?: boolean };
 
 export function createInitialChatState(): ChatState {
   return {
+    initialized: false,
     items: [],
     count: 0,
     limit: DEFAULT_MESSAGE_LIMIT,
@@ -242,10 +248,7 @@ interface AgentReply {
   id: string;
   content: string;
   createdAt: string;
-  trace?: {
-    actions: readonly AgentAction[];
-    sources?: ArticleSource[];
-  } | null;
+  trace?: AgentTrace | null;
 }
 
 /** Com artigo citado, a frase "Fonte: …" sai do texto: o card mostra a fonte. */
@@ -254,19 +257,24 @@ function agentItem(
   extra: Partial<AgentItem> = {},
 ): AgentItem {
   const sources = message.trace?.sources ?? [];
+  const parsed = messageAttachmentsSchema.safeParse(message.trace?.attachments);
+  const attachments = parsed.success ? parsed.data : null;
+  const draft = attachments?.ticketDraft;
   return {
     kind: "agent",
     id: message.id,
     content: stripSourceNote(message.content, sources),
     createdAt: message.createdAt,
     steps: trailSteps(message.trace?.actions ?? []),
+    trace: message.trace ?? null,
     sources,
-    lookup: null,
+    lookup: draft ? null : attachments?.ticketLookup ?? null,
     selectedCode: null,
-    draft: null,
-    quickReplies: null,
+    // Anexo histórico não autoriza confirmação: só o snapshot atual torna o rascunho acionável.
+    draft: draft ? { data: draft, values: initialDraftValues(draft), status: "unavailable", failure: null, failedAction: null } : null,
+    quickReplies: attachments?.quickReplies ?? null,
     selectedReply: null,
-    ticket: null,
+    ticket: attachments?.ticket ?? null,
     ...extra,
   };
 }
@@ -298,7 +306,6 @@ function itemFromMessage(message: TimelineMessage): ChatItem {
         createdAt: message.createdAt,
       };
     case "AGENT":
-      // Sem consulta, rascunho nem respostas rápidas: só a resposta do POST traz.
       return agentItem(message);
     case "ANALYST":
       return {
@@ -362,6 +369,23 @@ function applyConversation(
 const isBusy = (state: ChatState) =>
   state.pendingItemId !== null || state.draftOp !== null;
 
+/** O snapshot é a autoridade do rascunho; anexos históricos nunca o reativam sozinhos. */
+function reconcilePendingDraft(items: ChatItem[], pending: ChatConversationDetail["pendingDraft"], status: ConversationStatus): ChatItem[] {
+  if (pending === undefined) return items; // Compatibilidade com respostas anteriores ao contrato.
+  return items.map((item) => {
+    if (item.kind !== "agent") return item;
+    if (status === "WITH_AGENT" && pending?.messageId === item.id) {
+      const unchanged = item.draft?.data.id === pending.draft.id && item.draft.status === "pending";
+      return { ...item, draft: {
+        data: pending.draft,
+        values: unchanged ? item.draft!.values : initialDraftValues(pending.draft),
+        status: "pending", failure: null, failedAction: null,
+      }, lookup: null };
+    }
+    return item.draft?.status === "pending" ? { ...item, draft: { ...item.draft, status: "unavailable" } } : item;
+  });
+}
+
 function applyInput(state: ChatState, input: StreamInput): ChatState {
   const conversationId =
     input.type === "streamMessage" ? input.conversationId : input.conversation.id;
@@ -378,7 +402,7 @@ function applyInput(state: ChatState, input: StreamInput): ChatState {
       const sorted = [...input.messages].sort(
         (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
       );
-      const items = sorted.reduce(mergeMessage, state.items);
+      const items = reconcilePendingDraft(sorted.reduce(mergeMessage, state.items), input.pendingDraft, input.conversation.status);
       return applyConversation({ ...state, items }, input.conversation);
     }
   }
@@ -418,9 +442,18 @@ function finishDraft(
 
 export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
   switch (event.type) {
+    case "hydrated": {
+      if (state.initialized || isBusy(state) || state.items.length > 0) return state;
+      const { conversation, messages, pendingDraft } = event.snapshot;
+      if (!conversation) return { ...state, initialized: true };
+      const sorted = [...messages].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+      const items = reconcilePendingDraft(sorted.reduce(mergeMessage, []), pendingDraft ?? null, conversation.status);
+      return applyConversation({ ...state, initialized: true, conversationId: conversation.id, items }, conversation);
+    }
     case "sent":
       return {
         ...state,
+        initialized: true,
         items: [
           ...state.items,
           {
@@ -600,6 +633,6 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
       return { ...state, conversationId: undefined, lock: event.lock };
 
     case "reset":
-      return createInitialChatState();
+      return { ...createInitialChatState(), initialized: !event.recover };
   }
 }

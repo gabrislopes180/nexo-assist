@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { agentSourcesSchema } from "./agent-sources";
-import { agentActionSchema } from "./message";
+import { agentTraceSchema } from "./message";
 
 export const SYSTEM_KINDS = ["HANDOFF", "TAKEOVER", "RETURNED", "CLOSED"] as const;
 /** Qual aviso é a mensagem SYSTEM; o texto (`content`) é só para exibir. */
@@ -25,11 +24,7 @@ export const timelineMessageSchema = z.object({
    * Só no AGENT. Fora do formato vira null: a trilha some, a mensagem fica.
    * `sources` inválido não derruba o trace: só o card do artigo some.
    */
-  trace: z
-    .object({
-      actions: z.array(agentActionSchema),
-      sources: agentSourcesSchema,
-    })
+  trace: agentTraceSchema
     .nullable()
     .optional()
     .catch(null),

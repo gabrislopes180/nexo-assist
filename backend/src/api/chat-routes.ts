@@ -25,6 +25,10 @@ export function createChatRouter(deps: AppDeps, streams: EventStreams): Router {
     streams.open(req, res, { user: sessionUserOf(res), expiresAt: sessionExpiresAtOf(res), audience: "EMPLOYEE" });
   });
 
+  router.get("/conversations/active", requireSession(deps), async (_req, res) => {
+    res.json(await deps.chatService.getActiveConversation(sessionUserOf(res)));
+  });
+
   router.get("/conversations/:id", requireSession(deps), async (req, res) => {
     res.json(await deps.chatService.getConversation(sessionUserOf(res), idParamOf(req)));
   });

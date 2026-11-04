@@ -3,14 +3,30 @@
 import { useChat } from "@/features/send-message";
 import { ChatComposer } from "@/widgets/chat-composer";
 import { ChatThread } from "@/widgets/chat-thread";
+import { Button } from "@/shared/ui/button";
+import { PaneLoading } from "@/shared/ui/pane-loading";
+import { PaneMessage } from "@/shared/ui/pane-message";
 
 export function EmployeeChat() {
   const chat = useChat();
+
+  if (chat.isRecovering) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {chat.recoveryFailed ? (
+          <PaneMessage tone="error" action={<Button variant="secondary" onClick={chat.retryRecovery}>Tentar de novo</Button>}>
+            Não foi possível recuperar sua conversa.
+          </PaneMessage>
+        ) : <PaneLoading label="Recuperando sua conversa…" />}
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatThread
         items={chat.items}
+        agentActive={chat.status === null || chat.status === "WITH_AGENT"}
         isPending={chat.isPending}
         isAgentThinking={chat.isAgentThinking}
         lockedOut={chat.lock !== null}

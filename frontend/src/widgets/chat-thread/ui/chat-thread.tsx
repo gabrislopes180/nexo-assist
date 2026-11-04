@@ -28,6 +28,7 @@ const NEAR_BOTTOM_PX = 80;
 
 interface ChatThreadProps {
   items: ChatItem[];
+  agentActive: boolean;
   /** Turno em andamento: nada mais é clicável. */
   isPending: boolean;
   /** Turno com o agent: mostra "Analisando…". Com analista, só se espera a gravação. */
@@ -70,6 +71,7 @@ function lookupAttachment(
 
 export function ChatThread({
   items,
+  agentActive,
   isPending,
   isAgentThinking,
   lockedOut,
@@ -209,7 +211,7 @@ export function ChatThread({
 
               // Turno ou ação de rascunho em andamento: nada mais é clicável.
               const isIdle = !isPending && draftOp === null && !lockedOut;
-              const canAnswer = isLast && isIdle;
+              const canAnswer = isLast && isIdle && agentActive;
               const { draft } = item;
               const attachment = draft ? (
                 <TicketDraftCard
@@ -241,6 +243,7 @@ export function ChatThread({
                 <AgentMessage
                   key={item.id}
                   steps={item.steps}
+                  trace={item.trace}
                   replies={
                     item.quickReplies ? (
                       <QuickReplies

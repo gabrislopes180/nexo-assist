@@ -30,6 +30,7 @@ export const unusedChatService: ChatService = {
   confirmDraft: unusedChat,
   cancelDraft: unusedChat,
   getConversation: unusedChat,
+  getActiveConversation: unusedChat,
 };
 
 /** Só para testes de rota que não exercitam a central de ajuda. */

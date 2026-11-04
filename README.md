@@ -177,6 +177,14 @@ O envelope:
 
 `GET /chat/conversations/:id` devolve `{ conversation, messages }` com todas as mensagens em ordem cronológica, inclusive `ANALYST` (com `author`) e `SYSTEM`. O `trace` vem só nas do `AGENT`. O formato de cada mensagem está em [Mensagens da linha do tempo](#mensagens-da-linha-do-tempo). A rota aceita só o dono, com papel `EMPLOYEE`. Conversa de outra pessoa responde `404 CONVERSATION_NOT_FOUND`, igual a inexistente, e um analista recebe `403 FORBIDDEN`. Serve para ressincronizar depois de um `sync RESYNC` e como polling de reserva.
 
+### Retomada da conversa
+
+Ao abrir o chat, `GET /chat/conversations/active` recupera a conversa não encerrada mais recente do funcionário da sessão: `WITH_AGENT`, `WAITING_ANALYST` ou `WITH_ANALYST`, por `lastMessageAt` decrescente e, em empate, `id` decrescente. Essa data também avança nos eventos de assumir, devolver e encerrar. A cota é preservada mesmo quando já chegou a 30. Sem conversa elegível, retorna `{ conversation: null, messages: [], pendingDraft: null }`; erro de leitura continua sendo erro HTTP. A recuperação é somente leitura e não chama a LLM.
+
+As duas leituras (ativa e por ID) retornam o mesmo snapshot de conversa, mensagens e `pendingDraft: { messageId, draft } | null`. Somente a proposta ainda pendente e válida pode ser confirmada; a confirmação revalida as regras e continua protegida contra duplo clique. Cards e opções das novas mensagens ficam como snapshots em `Message.trace.attachments`, no JSON existente, sem migration. Mensagens antigas preservam texto/transparência/artigos e recuperam a proposta pendente quando possível; cards de consultas antigas que nunca foram salvos não são inventados. O novo turno lê as últimas 20 mensagens persistidas no servidor, inclusive as do analista.
+
+O frontend aguarda a descoberta e oferece retry em falhas, com cache separado por usuário e cancelado no logout. A hidratação ocorre uma vez por abertura da tela; foco/reconexão não reiniciam a conversa. Depois de conectar o SSE, um novo GET fecha a janela entre leitura e inscrição; snapshots anteriores a eventos ou ações são descartados. A opção **Iniciar nova conversa** mantém o chat vazio até o próximo envio, sem encerrar as outras conversas. Se a página for recarregada antes desse envio, a última conversa ativa volta a ser recuperada.
+
 ### Transferência para analista
 
 A conversa vai para a fila dos analistas (`status: WAITING_ANALYST`) em dois casos:

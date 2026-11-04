@@ -4,6 +4,7 @@ import type { AgentTrace } from "../shared/transparency.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
 import { ConversationNotFoundError } from "./conversation-rules.js";
+import { readEmployeeSnapshot, type EmployeeSnapshot } from "./employee-snapshot.js";
 import { snapshotSelect, timelineMessageSelect, toTimelineMessage, type ConversationSnapshot, type TimelineMessage } from "./timeline.js";
 
 /**
@@ -244,10 +245,10 @@ export async function findOwnedForEmployee(
   client: Reader,
   ownerId: string,
   conversationId: string,
-): Promise<{ snapshot: ConversationSnapshot; messages: TimelineMessage[] }> {
-  const snapshot = await client.conversation.findFirst({ where: { id: conversationId, ownerId }, select: snapshotSelect });
-  if (!snapshot) throw new ConversationNotFoundError();
-  return { snapshot, messages: await listMessages(client, conversationId) };
+): Promise<EmployeeSnapshot> {
+  const result = await readEmployeeSnapshot(client, ownerId, conversationId);
+  if (!result) throw new ConversationNotFoundError();
+  return result;
 }
 
 /** As leituras que os serviços recebem, para os testes poderem trocar o banco. */
@@ -255,14 +256,16 @@ export type ConversationQueries = {
   list(options: { now: Date; filter: ConsoleFilter; analystId: string; q?: string }): Promise<ConsoleRow[]>;
   find(conversationId: string): Promise<ConsoleRow>;
   messages(conversationId: string): Promise<TimelineMessage[]>;
-  ownedByEmployee(ownerId: string, conversationId: string): Promise<{ snapshot: ConversationSnapshot; messages: TimelineMessage[] }>;
+  ownedByEmployee(ownerId: string, conversationId: string): Promise<EmployeeSnapshot>;
+  activeForEmployee(ownerId: string): Promise<EmployeeSnapshot | null>;
 };
 
-export function createConversationQueries(client: Reader): ConversationQueries {
+export function createConversationQueries(client: PrismaClient): ConversationQueries {
   return {
     list: (options) => listForConsole(client, options),
     find: (conversationId) => findForConsole(client, conversationId),
     messages: (conversationId) => listMessages(client, conversationId),
-    ownedByEmployee: (ownerId, conversationId) => findOwnedForEmployee(client, ownerId, conversationId),
+    ownedByEmployee: (ownerId, conversationId) => client.$transaction((tx) => findOwnedForEmployee(tx, ownerId, conversationId)),
+    activeForEmployee: (ownerId) => client.$transaction((tx) => readEmployeeSnapshot(tx, ownerId)),
   };
 }

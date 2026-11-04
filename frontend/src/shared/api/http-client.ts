@@ -12,6 +12,7 @@ interface ApiRequestOptions<T> {
   body?: unknown;
   schema: z.ZodType<T>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 interface RawResponse {
@@ -25,6 +26,7 @@ async function send(
   method: "GET" | "POST",
   body: unknown,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<RawResponse> {
   try {
     const response = await fetch(`/api${path}`, {
@@ -32,7 +34,7 @@ async function send(
       headers:
         body === undefined ? undefined : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     // Lido aqui para o timeout valer também durante a leitura do corpo.
     const text = await response.text();
@@ -57,9 +59,10 @@ export async function apiRequest<T>(
     body,
     schema,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    signal,
   }: ApiRequestOptions<T>,
 ): Promise<T> {
-  const { ok, status, text } = await send(path, method, body, timeoutMs);
+  const { ok, status, text } = await send(path, method, body, timeoutMs, signal);
   const payload = parseJson(text);
 
   if (!ok) {

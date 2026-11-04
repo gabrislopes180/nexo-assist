@@ -2,6 +2,9 @@ import { CheckCheck } from "lucide-react";
 import { cn } from "@/shared/lib/utils";
 import { StatusBadge } from "@/shared/ui/status-badge";
 import type { ConsoleTimelineItem } from "../lib/console-timeline";
+import { trailSteps } from "../lib/trail-steps";
+import { AgentActions } from "./agent-actions";
+import { AgentDecision } from "./agent-decision";
 
 interface ConsoleMessageProps {
   message: Extract<ConsoleTimelineItem, { kind: "message" }>;
@@ -42,6 +45,11 @@ export function ConsoleMessage({ message, read = false }: ConsoleMessageProps) {
           )}
         </div>
       ) : null}
+      {from === "agent" && message.trace ? (
+        <div className="flex max-w-full flex-wrap justify-end gap-x-3 gap-y-0.5 text-caption">
+          <AgentActions steps={trailSteps(message.trace.actions)} />
+        </div>
+      ) : null}
       <div
         className={cn(
           "flex flex-wrap items-end gap-x-2.5 gap-y-0.5 px-3 pt-2 pb-1.5 shadow-bubble",
@@ -65,6 +73,7 @@ export function ConsoleMessage({ message, read = false }: ConsoleMessageProps) {
           ) : null}
         </span>
       </div>
+      {from === "agent" ? <AgentDecision trace={message.trace} /> : null}
     </div>
   );
 }

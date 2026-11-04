@@ -26,6 +26,7 @@ const unusedChatService: ChatService = {
   confirmDraft: () => Promise.reject(new Error("chat não usado nestes testes")),
   cancelDraft: () => Promise.reject(new Error("chat não usado nestes testes")),
   getConversation: () => Promise.reject(new Error("chat não usado nestes testes")),
+  getActiveConversation: () => Promise.reject(new Error("chat não usado nestes testes")),
 };
 
 async function start(deps: Omit<AppDeps, "chatService" | "consoleService" | "consoleTicketService" | "knowledgeService" | "eventBus">): Promise<string> {

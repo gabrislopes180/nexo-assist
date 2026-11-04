@@ -28,8 +28,8 @@ const response = {
     createdAt: "2026-10-16T17:20:00.000Z",
     trace: {
       understood: "x",
-      intent: "y",
-      confidence: 0.9,
+      intent: "CHECK_TICKET",
+      confidence: "HIGH",
       reason: "z",
       actions: [
         { tool: "searchMyOpenTickets", summary: "s", status: "SUCCESS" },
@@ -111,12 +111,10 @@ describe("chatResponseSchema", () => {
     expect(chatResponseSchema.parse(response).ticketLookup).toBeNull();
   });
 
-  it("descarta os campos do trace que a UI não consome", () => {
+  it("preserva a explicação completa da decisão na resposta do chat", () => {
     const parsed = chatResponseSchema.parse(response);
 
-    expect(parsed.message?.trace).toEqual({
-      actions: response.message.trace.actions,
-    });
+    expect(parsed.message?.trace).toEqual(response.message.trace);
     expect(parsed.message).not.toHaveProperty("authorType");
   });
 

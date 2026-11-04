@@ -9,7 +9,7 @@ const agent = {
   createdAt: "2026-11-03T10:00:00.000Z",
   trace: {
     understood: "x",
-    intent: "y",
+    intent: "CHECK_TICKET",
     confidence: "HIGH",
     reason: "z",
     actions: [{ tool: "searchMyOpenTickets", summary: "s", status: "SUCCESS" }],
@@ -27,8 +27,8 @@ const system = {
 };
 
 describe("timelineMessageSchema", () => {
-  it("guarda as ações do trace", () => {
-    expect(timelineMessageSchema.parse(agent).trace?.actions).toHaveLength(1);
+  it("preserva a decisão completa recuperada do histórico", () => {
+    expect(timelineMessageSchema.parse(agent).trace).toEqual(agent.trace);
   });
 
   it("trace inválido vira null sem derrubar a mensagem", () => {

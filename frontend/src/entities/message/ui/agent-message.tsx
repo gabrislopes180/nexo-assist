@@ -1,11 +1,13 @@
-import { Check, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { cn } from "@/shared/lib/utils";
 import { splitQuestion } from "../lib/split-question";
 import type { TrailStep } from "../lib/trail-steps";
+import type { AgentTrace } from "../model/message";
+import { AgentActions } from "./agent-actions";
+import { AgentDecision } from "./agent-decision";
 
 interface AgentMessageProps {
   steps: TrailStep[];
+  trace?: AgentTrace | null;
   /** Texto puro: a resposta nunca é interpretada como HTML. */
   children: string;
   /** Dentro da bolha, abaixo do texto: respostas rápidas. */
@@ -17,6 +19,7 @@ interface AgentMessageProps {
 
 export function AgentMessage({
   steps,
+  trace,
   children,
   replies,
   sources,
@@ -30,21 +33,7 @@ export function AgentMessage({
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-caption">
         <span className="text-caption-strong text-ink">Nexo Assist</span>
-        {steps.map(({ label, failed }) => {
-          const Icon = failed ? X : Check;
-          return (
-            <span
-              key={`${label}|${failed}`}
-              className={cn(
-                "inline-flex items-center gap-1.25",
-                failed ? "text-danger-text" : "text-ink-3",
-              )}
-            >
-              <Icon aria-hidden="true" size={12} />
-              {label}
-            </span>
-          );
-        })}
+        <AgentActions steps={steps} />
       </div>
       <div className="flex w-full max-w-(--agent-bubble-width) flex-col gap-3 rounded-lg rounded-tl-xs border border-rule bg-paper px-4 py-3">
         <p className="text-body leading-normal wrap-anywhere whitespace-pre-line text-ink">
@@ -57,6 +46,7 @@ export function AgentMessage({
         ) : null}
         {replies}
       </div>
+      <AgentDecision trace={trace} />
       {sources}
       {attachment}
     </div>

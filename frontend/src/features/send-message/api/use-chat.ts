@@ -1,6 +1,7 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLayoutEffect, useReducer, useRef } from "react";
-import { SESSION_QUERY_KEY } from "@/entities/session";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
+import { SESSION_QUERY_KEY, useAuthenticatedUser } from "@/entities/session";
+import { ApiError } from "@/shared/api/api-error";
 import {
   draftConfirmBody,
   type DraftValues,
@@ -19,6 +20,7 @@ import { CHAT_MESSAGE_MAX_LENGTH } from "../model/chat-schema";
 import { cancelDraft, confirmDraft } from "./draft-actions";
 import { sendChatMessage } from "./send-message";
 import { useChatStream } from "./use-chat-stream";
+import { activeConversationOptions } from "./get-active-conversation";
 
 type AgentItem = Extract<ChatItem, { kind: "agent" }>;
 
@@ -37,6 +39,7 @@ async function runDraftRequest(request: DraftRequest) {
 
 export function useChat() {
   const queryClient = useQueryClient();
+  const user = useAuthenticatedUser();
   const [state, dispatch] = useReducer(
     chatReducer,
     undefined,
@@ -68,12 +71,26 @@ export function useChat() {
 
   const isIdle = state.pendingItemId === null && state.draftOp === null;
   const withAgent = state.status === null || state.status === "WITH_AGENT";
+  const recovery = useQuery({ ...activeConversationOptions(user.id), enabled: !state.initialized });
+
+  useEffect(() => {
+    if (!state.initialized && recovery.isFetchedAfterMount && !recovery.isFetching && recovery.data) {
+      dispatch({ type: "hydrated", snapshot: recovery.data });
+    }
+  }, [state.initialized, recovery.isFetchedAfterMount, recovery.isFetching, recovery.data]);
+
+  useEffect(() => {
+    if (recovery.error instanceof ApiError && (recovery.error.status === 401 || recovery.error.status === 403)) {
+      void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY });
+    }
+  }, [queryClient, recovery.error]);
 
   const stream = useChatStream({
     conversationId: state.conversationId,
     status: state.status,
     dispatch,
     generationRef,
+    busy: !isIdle,
   });
 
   /** Foi para a fila do analista sem o stream ao vivo: o marco não chegaria sozinho. */
@@ -95,12 +112,12 @@ export function useChat() {
     () => () => {
       generationRef.current += 1;
       isSendingRef.current = false;
-      dispatch({ type: "reset" });
+      dispatch({ type: "reset", recover: true });
     },
     [],
   );
 
-  const canStart = () => !isSendingRef.current && isIdle;
+  const canStart = () => state.initialized && !isSendingRef.current && isIdle;
 
   const expireSessionIf = (expired: boolean) => {
     if (expired) {
@@ -115,10 +132,12 @@ export function useChat() {
     try {
       const result = await mutateAsync({ message, conversationId });
       if (generation !== generationRef.current) return;
+      stream.invalidate();
       dispatch({ type: "succeeded", result });
       resyncIfHandedOff(result.conversation);
     } catch (error) {
       if (generation !== generationRef.current) return;
+      stream.invalidate();
 
       const failure = getChatFailure(error);
       dispatch({ type: "failed", failure });
@@ -128,6 +147,7 @@ export function useChat() {
   };
 
   const startTurn = (text: string) => {
+    stream.invalidate();
     isSendingRef.current = true;
     dispatch({ type: "sent", id: nextId(), text });
     void runTurn(text);
@@ -145,6 +165,7 @@ export function useChat() {
     if (lastItem?.kind !== "user" || !lastItem.failure?.retryable) return;
 
     isSendingRef.current = true;
+    stream.invalidate();
     dispatch({ type: "retried", id: lastItem.id });
     void runTurn(lastItem.text);
   };
@@ -194,12 +215,14 @@ export function useChat() {
         ? { action, draftId: data.id, body: draftConfirmBody(data, values) }
         : { action, draftId: data.id };
     const generation = generationRef.current;
+    stream.invalidate();
     isSendingRef.current = true;
     dispatch({ type: "draftActionStarted", id: agentItemId, action });
 
     try {
       const outcome = await mutateDraft(request);
       if (generation !== generationRef.current) return;
+      stream.invalidate();
       if (outcome.action === "confirm") {
         dispatch({ type: "draftConfirmed", result: outcome.result });
         resyncIfHandedOff(outcome.result.conversation);
@@ -208,6 +231,7 @@ export function useChat() {
       }
     } catch (error) {
       if (generation !== generationRef.current) return;
+      stream.invalidate();
 
       const failure = getDraftFailure(error);
       dispatch({ type: "draftFailed", failure });
@@ -242,6 +266,9 @@ export function useChat() {
   };
 
   return {
+    isRecovering: !state.initialized,
+    recoveryFailed: !state.initialized && recovery.isError && !recovery.isFetching,
+    retryRecovery: () => { void recovery.refetch(); },
     items: state.items,
     isPending: state.pendingItemId !== null,
     /** "Analisando…" só quando quem responde é o agent. */

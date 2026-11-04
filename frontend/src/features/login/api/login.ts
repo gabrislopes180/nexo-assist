@@ -6,6 +6,7 @@ import {
   type SessionUser,
 } from "@/entities/session";
 import { apiRequest } from "@/shared/api/http-client";
+import { CHAT_QUERY_ROOT } from "@/shared/api/query-keys";
 
 export function login(email: string) {
   return apiRequest("/auth/login", {
@@ -24,6 +25,9 @@ export async function signIn(
   email: string,
 ): Promise<SessionUser | null> {
   await login(email);
+
+  await queryClient.cancelQueries({ queryKey: CHAT_QUERY_ROOT });
+  queryClient.removeQueries({ queryKey: CHAT_QUERY_ROOT });
 
   // Uma consulta anterior ao login devolveria null e seria reaproveitada.
   await queryClient.cancelQueries({ queryKey: SESSION_QUERY_KEY });
