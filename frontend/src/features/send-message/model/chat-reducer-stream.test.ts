@@ -480,3 +480,79 @@ describe("noticeFor", () => {
     expect(noticeFor(active())).toBeNull();
   });
 });
+
+describe("chatReducer: artigo da central de ajuda", () => {
+  const vpn = { slug: "vpn-erro-809", title: "VPN com erro 809" };
+  const cited = "Reinstale o perfil da VPN. Fonte: VPN com erro 809 (central de ajuda).";
+
+  it("resposta do POST guarda a fonte e esconde a frase do fim", () => {
+    const state = active({
+      message: {
+        id: "m1",
+        content: cited,
+        createdAt: at(2),
+        trace: { actions: [], sources: [vpn] },
+      },
+      quickReplies: ["Resolveu, obrigado", "Não resolveu, abrir chamado"],
+    });
+
+    expect(state.items.at(-1)).toMatchObject({
+      kind: "agent",
+      content: "Reinstale o perfil da VPN.",
+      sources: [vpn],
+      quickReplies: ["Resolveu, obrigado", "Não resolveu, abrir chamado"],
+    });
+  });
+
+  it("sem fonte, o texto fica como veio e a lista é vazia", () => {
+    const state = active({
+      message: { id: "m1", content: cited, createdAt: at(2), trace: { actions: [] } },
+    });
+
+    expect(state.items.at(-1)).toMatchObject({ content: cited, sources: [] });
+  });
+
+  it("mensagem do SSE traz o card e o texto sem a frase", () => {
+    const state = run(
+      active(),
+      stream(
+        timeline("m2", "AGENT", 5, cited, {
+          trace: { actions: [], sources: [vpn] },
+        }),
+      ),
+    );
+
+    expect(state.items.at(-1)).toMatchObject({
+      id: "m2",
+      content: "Reinstale o perfil da VPN.",
+      sources: [vpn],
+    });
+  });
+
+  it("a ressincronização (recarregar a página) mantém o card", () => {
+    const state = run(createInitialChatState(), {
+      type: "sent",
+      id: "local-1",
+      text: "Oi",
+    }, { type: "succeeded", result: turn() }, {
+      type: "resynced",
+      conversation: conversation(),
+      messages: [
+        timeline("m3", "AGENT", 6, cited, {
+          trace: { actions: [], sources: [vpn] },
+        }),
+      ],
+    });
+
+    expect(state.items.find((item) => item.id === "m3")).toMatchObject({
+      content: "Reinstale o perfil da VPN.",
+      sources: [vpn],
+    });
+  });
+
+  it("mensagem de analista com a mesma frase não muda", () => {
+    const state = run(active(), stream(timeline("x1", "ANALYST", 5, cited)));
+
+    expect(state.items.at(-1)).toMatchObject({ kind: "analyst", content: cited });
+  });
+});

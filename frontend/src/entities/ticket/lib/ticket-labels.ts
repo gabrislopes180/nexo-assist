@@ -1,6 +1,5 @@
 import type { StatusTone } from "@/shared/ui/status-badge";
 import type {
-  TicketCategory,
   TicketPriority,
   TicketStatus,
 } from "../model/ticket";
@@ -12,14 +11,7 @@ export const TYPE_LABELS: Record<"INC" | "REQ", string> = {
   REQ: "Requisição",
 };
 
-export const CATEGORY_LABELS: Record<TicketCategory, string> = {
-  ACCESS: "Acesso",
-  NETWORK_VPN: "Rede e VPN",
-  HARDWARE: "Hardware",
-  SOFTWARE: "Software",
-  EMAIL: "E-mail",
-  OTHER: "Outros",
-};
+export { CATEGORY_LABELS } from "@/shared/config/ticket-category";
 
 export const PRIORITY_LABELS: Record<TicketPriority, string> = {
   CRITICAL: "Crítica",

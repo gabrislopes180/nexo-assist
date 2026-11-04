@@ -37,6 +37,34 @@ describe("timelineMessageSchema", () => {
     expect(parsed.content).toBe("Olá");
   });
 
+  it("guarda o artigo citado em trace.sources", () => {
+    const parsed = timelineMessageSchema.parse({
+      ...agent,
+      trace: {
+        ...agent.trace,
+        sources: [
+          { kind: "ARTICLE", slug: "vpn-erro-809", title: "VPN com erro 809" },
+        ],
+      },
+    });
+    expect(parsed.trace?.sources).toEqual([
+      { slug: "vpn-erro-809", title: "VPN com erro 809" },
+    ]);
+  });
+
+  it("fonte inválida some e a trilha fica", () => {
+    const parsed = timelineMessageSchema.parse({
+      ...agent,
+      trace: { ...agent.trace, sources: "vpn" },
+    });
+    expect(parsed.trace?.sources).toEqual([]);
+    expect(parsed.trace?.actions).toHaveLength(1);
+  });
+
+  it("trace antigo, sem sources, fica sem fonte", () => {
+    expect(timelineMessageSchema.parse(agent).trace?.sources).toBeUndefined();
+  });
+
   it("aceita trace ausente ou null", () => {
     const rest: Record<string, unknown> = { ...agent };
     delete rest.trace;

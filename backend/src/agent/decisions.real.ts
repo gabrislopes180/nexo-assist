@@ -6,7 +6,8 @@
  * `npm run eval:agent -- returned` roda só os cenários de conversa devolvida por um analista.
  * `npm run eval:agent -- out-of-scope` roda só as fronteiras de encaminhamento (RH, Financeiro, Facilities, TI).
  * `npm run eval:agent -- waiting` roda só o status de chamado aguardando o funcionário.
- * `npm run eval:agent -- help` roda só a central de ajuda (citação, condição do artigo, sem artigo, "Não resolveu").
+ * `npm run eval:agent -- help` roda só a central de ajuda (dúvidas e relatos: citação, condição do artigo, sem artigo, "Não resolveu").
+ * `npm run eval:agent -- create` roda só a abertura de chamado (relato, resposta de afetados, pedido explícito, terceiro).
  */
 import { AgentUnavailableError } from "../chat/agent-runner.js";
 import type { HistoryMessage } from "../conversations/conversation-service.js";
@@ -255,7 +256,7 @@ async function waitingCase(): Promise<void> {
 
 const VPN_QUESTION = "Minha VPN dá erro 809 no Windows 10, o que eu faço?";
 
-type HelpCase = { name: string; message: string; history?: HistoryMessage[]; check: (reply: AgentTurnResult) => boolean };
+type HelpCase = { name: string; message: string; history?: HistoryMessage[]; check: (reply: AgentTurnResult, searches: readonly HelpCenterSearchInput[]) => boolean };
 
 const citedSlug = (reply: AgentTurnResult) => reply.trace.sources?.[0]?.slug ?? null;
 const proposedTicket = (reply: AgentTurnResult) => reply.trace.actions.some((action) => action.tool === "draftTicket");
@@ -274,6 +275,20 @@ const HELP_CASES: readonly HelpCase[] = [
     message: "Como conecto um segundo monitor no meu computador?",
     check: (reply) => citedSlug(reply) === null && /chamado/i.test(reply.content) && !/cabo|hdmi|displayport|conecte|configura[çc]/i.test(reply.content),
   },
+  // Relatos sem pergunta: também passam pela central de ajuda.
+  { name: "relato: cita impressora-nao-imprime", message: "Minha impressora não imprime", check: (reply, searches) => searches.length > 0 && citedSlug(reply) === "impressora-nao-imprime" && helpButtons(reply) && !proposedTicket(reply) },
+  { name: "relato: cita vpn-erro-809", message: "Minha VPN deu erro 809 no Windows 10", check: (reply, searches) => searches.length > 0 && citedSlug(reply) === "vpn-erro-809" && !proposedTicket(reply) },
+  {
+    name: "relato Windows 11: abertura sem os passos",
+    message: "Minha VPN deu erro 809 no Windows 11",
+    check: (reply, searches) => searches.length > 0 && citedSlug(reply) === null && proposedTicket(reply) && !/reinstal/i.test(reply.content),
+  },
+  {
+    name: "relato sem artigo: busca e segue para draftTicket",
+    message: "O monitor externo do meu notebook fica piscando",
+    check: (reply, searches) => searches.length > 0 && citedSlug(reply) === null && proposedTicket(reply),
+  },
+  { name: "pedido explícito de chamado: sem busca", message: "Quero abrir um chamado: minha impressora não imprime", check: (reply, searches) => searches.length === 0 && proposedTicket(reply) },
 ];
 
 /** "Não resolveu" depois do artigo, e a pergunta de afetados: a proposta leva "Já tentou: <título>". */
@@ -313,7 +328,7 @@ async function helpCases(): Promise<void> {
     articleSearches.length = 0;
     try {
       const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: false, actor: { id: OWNER, name: "Marina Costa" }, history, message });
-      const verdict = check(reply);
+      const verdict = check(reply, articleSearches);
       if (!verdict) process.exitCode = 1;
       console.log(verdict ? "ok  " : "FALHA", `[help] ${name}`, JSON.stringify({ content: reply.content, sources: reply.trace.sources ?? null, quickReplies: reply.quickReplies, searches: articleSearches, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
     } catch (error) {
@@ -329,6 +344,48 @@ async function helpCases(): Promise<void> {
     process.exitCode = 1;
     console.log("FALHA", "[help] não resolveu", "agent indisponível", JSON.stringify(metrics ?? null));
   }
+}
+
+/** Abertura de chamado: o relato chega em draftTicket (com ou sem busca antes) e a resposta à pergunta de afetados não busca de novo. */
+type CreateCase = { name: string; message: string; history?: HistoryMessage[]; check: (reply: AgentTurnResult, searches: readonly HelpCenterSearchInput[]) => boolean };
+
+const MONITOR_REPORT = "O monitor externo do meu notebook fica piscando";
+const CREATE_CASES: readonly CreateCase[] = [
+  { name: "relato vai para a pergunta de afetados", message: MONITOR_REPORT, check: (reply) => proposedTicket(reply) && reply.content === "Quem está sendo afetado?" },
+  {
+    name: "resposta de afetados: proposta, sem nova busca",
+    message: "Só eu",
+    history: [
+      { authorType: "EMPLOYEE", content: MONITOR_REPORT },
+      { authorType: "AGENT", content: "Quem está sendo afetado?" },
+    ],
+    check: (reply, searches) => searches.length === 0 && reply.ticketDraft?.kind === "CREATE",
+  },
+  { name: "abre um chamado: direto, sem busca", message: "Abre um chamado, meu teclado parou de funcionar", check: (reply, searches) => searches.length === 0 && proposedTicket(reply) },
+  { name: "pedido para terceiro: sem rascunho", message: "Abre um chamado para o Pedro, o notebook dele não liga", check: (reply) => reply.ticketDraft == null },
+];
+
+async function createCases(): Promise<void> {
+  lookupResult = NO_MATCH;
+  for (const { name, message, history = [], check } of CREATE_CASES) {
+    metrics = undefined;
+    articleSearches.length = 0;
+    try {
+      const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: false, actor: { id: OWNER, name: "Marina Costa" }, history, message });
+      const verdict = check(reply, articleSearches);
+      if (!verdict) process.exitCode = 1;
+      console.log(verdict ? "ok  " : "FALHA", `[create] ${name}`, JSON.stringify({ content: reply.content, draft: reply.ticketDraft?.kind ?? null, searches: articleSearches, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
+    } catch (error) {
+      if (!(error instanceof AgentUnavailableError)) throw error;
+      process.exitCode = 1;
+      console.log("FALHA", `[create] ${name}`, "agent indisponível", JSON.stringify(metrics ?? null));
+    }
+  }
+}
+
+if (process.argv.includes("create")) {
+  await createCases();
+  process.exit();
 }
 
 if (process.argv.includes("help")) {

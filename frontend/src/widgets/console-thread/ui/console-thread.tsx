@@ -74,6 +74,13 @@ export function ConsoleThread({
         })
       : [];
 
+  const timelineIds = timeline.map((item) => item.key);
+
+  console.log(
+    "Timeline duplicada:",
+    timelineIds.filter((key, index) => timelineIds.indexOf(key) !== index),
+  );
+
   // Ao trocar de conversa, vai ao fim; com itens novos, só se estava perto dele.
   useEffect(() => {
     const scroller = scrollRef.current;

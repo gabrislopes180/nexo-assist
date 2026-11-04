@@ -5,8 +5,11 @@ import {
   type Person,
 } from "@/entities/conversation";
 import {
+  stripSourceNote,
   systemEventIcon,
   trailSteps,
+  type AgentAction,
+  type ArticleSource,
   type SystemEventIcon,
   type TimelineMessage,
   type TrailStep,
@@ -97,6 +100,8 @@ export type ChatItem =
       content: string;
       createdAt: string;
       steps: TrailStep[];
+      /** Artigos citados (`trace.sources`): viram cards abaixo da bolha. */
+      sources: ArticleSource[];
       lookup: TicketLookup | null;
       selectedCode: string | null;
       draft: DraftView | null;
@@ -233,19 +238,29 @@ function markPendingDrafts(items: ChatItem[], status: DraftStatus): ChatItem[] {
   );
 }
 
+interface AgentReply {
+  id: string;
+  content: string;
+  createdAt: string;
+  trace?: {
+    actions: readonly AgentAction[];
+    sources?: ArticleSource[];
+  } | null;
+}
+
+/** Com artigo citado, a frase "Fonte: …" sai do texto: o card mostra a fonte. */
 function agentItem(
-  id: string,
-  content: string,
-  createdAt: string,
-  steps: TrailStep[],
+  message: AgentReply,
   extra: Partial<AgentItem> = {},
 ): AgentItem {
+  const sources = message.trace?.sources ?? [];
   return {
     kind: "agent",
-    id,
-    content,
-    createdAt,
-    steps,
+    id: message.id,
+    content: stripSourceNote(message.content, sources),
+    createdAt: message.createdAt,
+    steps: trailSteps(message.trace?.actions ?? []),
+    sources,
     lookup: null,
     selectedCode: null,
     draft: null,
@@ -284,12 +299,7 @@ function itemFromMessage(message: TimelineMessage): ChatItem {
       };
     case "AGENT":
       // Sem consulta, rascunho nem respostas rápidas: só a resposta do POST traz.
-      return agentItem(
-        message.id,
-        message.content,
-        message.createdAt,
-        trailSteps(message.trace?.actions ?? []),
-      );
+      return agentItem(message);
     case "ANALYST":
       return {
         kind: "analyst",
@@ -452,26 +462,20 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
         ? markPendingDrafts(withRealId, "superseded")
         : withRealId;
       const answer = message
-        ? agentItem(
-            message.id,
-            message.content,
-            message.createdAt,
-            trailSteps(message.trace.actions),
-            {
-              // Com rascunho, o seletor some: a proposta é o próximo passo.
-              lookup: ticketDraft ? null : ticketLookup,
-              draft: ticketDraft
-                ? {
-                    data: ticketDraft,
-                    values: initialDraftValues(ticketDraft),
-                    status: "pending",
-                    failure: null,
-                    failedAction: null,
-                  }
-                : null,
-              quickReplies,
-            },
-          )
+        ? agentItem(message, {
+            // Com rascunho, o seletor some: a proposta é o próximo passo.
+            lookup: ticketDraft ? null : ticketLookup,
+            draft: ticketDraft
+              ? {
+                  data: ticketDraft,
+                  values: initialDraftValues(ticketDraft),
+                  status: "pending",
+                  failure: null,
+                  failedAction: null,
+                }
+              : null,
+            quickReplies,
+          })
         : null;
       return drain({
         ...state,
@@ -543,13 +547,7 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
       const finished = finishDraft(
         state,
         "confirmed",
-        agentItem(
-          message.id,
-          message.content,
-          message.createdAt,
-          trailSteps(message.trace.actions),
-          { ticket },
-        ),
+        agentItem(message, { ticket }),
       );
       if (finished === state) return state;
       if (!conversation) return drain(finished);
@@ -569,12 +567,7 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
       const finished = finishDraft(
         state,
         "cancelled",
-        agentItem(
-          message.id,
-          message.content,
-          message.createdAt,
-          trailSteps(message.trace.actions),
-        ),
+        agentItem(message),
       );
       return finished === state ? state : drain(finished);
     }

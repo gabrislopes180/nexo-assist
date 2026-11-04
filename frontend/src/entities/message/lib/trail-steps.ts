@@ -19,6 +19,10 @@ const TOOL_STEPS: Record<string, StepsByStatus> = {
     SUCCESS: done("consultou seus chamados"),
     ERROR: failed("não conseguiu consultar seus chamados"),
   },
+  searchHelpCenter: {
+    SUCCESS: done("buscou na central de ajuda"),
+    ERROR: failed("não conseguiu buscar na central de ajuda"),
+  },
   draftTicket: {
     SUCCESS: done(
       "classificou a prioridade",

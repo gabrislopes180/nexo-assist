@@ -90,7 +90,7 @@ export function AnalystConsole() {
       />
       {selectedId ? (
         <ConsoleThread
-          key={selectedId}
+          key={`thread:${selectedId}`}
           conversationId={selectedId}
           onBack={isLg ? undefined : clearSelection}
           onClearSelection={clearSelection}
@@ -109,7 +109,7 @@ export function AnalystConsole() {
       )}
       {conversation && showInlinePanel ? (
         <TicketPanel
-          key={conversation.id}
+          key={`ticket-panel:${conversation.id}`}
           conversation={conversation}
           now={now}
           onClose={() => setPanelDismissed(true)}
@@ -127,7 +127,7 @@ export function AnalystConsole() {
               Chamados de {conversation.owner.name}
             </SheetTitle>
             <TicketPanel
-              key={conversation.id}
+              key={`ticket-panel:${conversation.id}`}
               conversation={conversation}
               now={now}
               onClose={() => setSheetOpen(false)}

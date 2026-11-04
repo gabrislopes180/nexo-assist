@@ -89,6 +89,8 @@ Exceção: `processes/layouts` mantém `sidebar.tsx`, `authenticated-layout.tsx`
 | `entities/conversation` | Tipo da conversa e do estado (com o agent, aguardando, com analista), ConversationItem |
 | `entities/message` | Tipos de mensagem e registro de transparência, UserMessage, AgentMessage, ConsoleMessage, SystemEvent |
 | `entities/session` | Usuário logado |
+| `entities/article` | Artigo da central de ajuda: schema e `useArticle` (`GET /help/articles/:slug`), ArticleCard. A fonte citada vem de `trace.sources` (`entities/message`) |
+| `shared/config` | Constantes de domínio usadas por mais de uma entidade: categorias e rótulos (`ticket-category`) |
 | `features/` | `send-message`, `confirm-ticket-draft`, `select-ticket`, `takeover-conversation`, `return-to-agent`, `reply-to-conversation`, `close-conversation`, `change-ticket-status`, `login` |
 | `widgets/` | `login-hero`, `chat-thread`, `chat-composer`, `conversation-list`, `ticket-panel`, `console-rail` |
 | `processes/` | `layouts`: sidebar compartilhado e layout autenticado |

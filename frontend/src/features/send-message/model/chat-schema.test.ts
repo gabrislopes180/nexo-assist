@@ -120,6 +120,38 @@ describe("chatResponseSchema", () => {
     expect(parsed.message).not.toHaveProperty("authorType");
   });
 
+  it("guarda o artigo citado em trace.sources", () => {
+    const parsed = chatResponseSchema.parse({
+      ...response,
+      message: {
+        ...response.message,
+        trace: {
+          ...response.message.trace,
+          sources: [
+            { kind: "ARTICLE", slug: "vpn-erro-809", title: "VPN com erro 809" },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.message?.trace.sources).toEqual([
+      { slug: "vpn-erro-809", title: "VPN com erro 809" },
+    ]);
+  });
+
+  it("fonte inválida some sem derrubar a resposta", () => {
+    const parsed = chatResponseSchema.parse({
+      ...response,
+      message: {
+        ...response.message,
+        trace: { ...response.message.trace, sources: [{ kind: "ARTICLE" }] },
+      },
+    });
+
+    expect(parsed.message?.trace.sources).toEqual([]);
+    expect(parsed.message?.trace.actions).toHaveLength(1);
+  });
+
   it("aceita resposta com consulta", () => {
     const parsed = chatResponseSchema.parse({
       ...response,

@@ -20,6 +20,19 @@ describe("trailSteps", () => {
     ]);
   });
 
+  it("mapeia a busca na central de ajuda e a falha dela", () => {
+    expect(trailSteps([action("searchHelpCenter", "SUCCESS")])).toEqual([
+      { label: "buscou na central de ajuda", failed: false },
+    ]);
+    expect(trailSteps([action("searchHelpCenter", "ERROR")])).toEqual([
+      { label: "não conseguiu buscar na central de ajuda", failed: true },
+    ]);
+  });
+
+  it("oculta a citação descartada", () => {
+    expect(trailSteps([action("citeArticle", "SKIPPED")])).toEqual([]);
+  });
+
   it("oculta ação pulada", () => {
     expect(trailSteps([action("searchMyOpenTickets", "SKIPPED")])).toEqual([]);
   });

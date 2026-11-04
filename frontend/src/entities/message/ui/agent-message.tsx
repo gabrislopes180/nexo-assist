@@ -10,6 +10,8 @@ interface AgentMessageProps {
   children: string;
   /** Dentro da bolha, abaixo do texto: respostas rápidas. */
   replies?: ReactNode;
+  /** Abaixo da bolha, antes do anexo: cards dos artigos citados. */
+  sources?: ReactNode;
   attachment?: ReactNode;
 }
 
@@ -17,6 +19,7 @@ export function AgentMessage({
   steps,
   children,
   replies,
+  sources,
   attachment,
 }: AgentMessageProps) {
   const { text, question } = replies
@@ -54,6 +57,7 @@ export function AgentMessage({
         ) : null}
         {replies}
       </div>
+      {sources}
       {attachment}
     </div>
   );

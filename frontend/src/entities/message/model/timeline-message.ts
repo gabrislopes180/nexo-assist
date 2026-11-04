@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentSourcesSchema } from "./agent-sources";
 import { agentActionSchema } from "./message";
 
 export const SYSTEM_KINDS = ["HANDOFF", "TAKEOVER", "RETURNED", "CLOSED"] as const;
@@ -20,9 +21,15 @@ export const timelineMessageSchema = z.object({
   systemKind: z.enum(SYSTEM_KINDS).nullable().catch(null),
   content: z.string(),
   createdAt: z.iso.datetime(),
-  /** Só no AGENT. Fora do formato vira null: a trilha some, a mensagem fica. */
+  /**
+   * Só no AGENT. Fora do formato vira null: a trilha some, a mensagem fica.
+   * `sources` inválido não derruba o trace: só o card do artigo some.
+   */
   trace: z
-    .object({ actions: z.array(agentActionSchema) })
+    .object({
+      actions: z.array(agentActionSchema),
+      sources: agentSourcesSchema,
+    })
     .nullable()
     .optional()
     .catch(null),

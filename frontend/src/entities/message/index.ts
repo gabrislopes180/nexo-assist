@@ -1,4 +1,6 @@
 export { trailSteps, type TrailStep } from "./lib/trail-steps";
+export { stripSourceNote } from "./lib/strip-source-note";
+export type { ArticleSource } from "./model/agent-sources";
 export {
   systemEventIcon,
   type SystemEventIcon,

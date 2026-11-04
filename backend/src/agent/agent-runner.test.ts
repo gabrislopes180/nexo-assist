@@ -8,6 +8,7 @@ import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
 import { decisionJson, fakeModel, type FakeStep } from "./testing/fake-model.js";
 import { articleNote, HELP_QUICK_REPLIES, overdueOfferCodeFrom, overdueOfferText, templateFor, windowExpiredText } from "./trace.js";
 import { KnowledgeUnavailableError } from "../knowledge/knowledge-service.js";
+import { buildInstructions } from "./instructions.js";
 import type { HelpArticle } from "../shared/knowledge.js";
 
 const ticket = (code: string): TicketSummary => ({
@@ -1204,6 +1205,77 @@ describe("central de ajuda (modelo fake)", () => {
     assert.equal(result.ticketDraft?.kind, "CREATE");
     assert.equal(result.ticketDraft?.kind === "CREATE" ? result.ticketDraft.description : null, "Erro 809 ao conectar na VPN no Windows 10.\n\nJá tentou: VPN com erro 809.");
     assert.equal(result.trace.sources, undefined);
+  });
+
+  describe("relato de problema sem pergunta", () => {
+    const PRINTER: HelpArticle = {
+      slug: "impressora-nao-imprime",
+      title: "Impressora não imprime",
+      category: "HARDWARE",
+      content: "Confira se a impressora certa está selecionada, cancele os trabalhos presos na fila e desligue e ligue a impressora.",
+    };
+    const ticketInput = { title: "VPN com erro 809", description: "Erro 809 ao conectar na VPN.", type: "INC", category: "NETWORK_VPN", priority: "MEDIUM", priorityReason: "impede o acesso remoto", keywords: ["vpn", "809"] };
+    const draft = (extra: Record<string, unknown> = {}): FakeStep => ({ kind: "tool", toolName: "draftTicket", input: { ...ticketInput, ...extra } });
+    const final: FakeStep = { kind: "text", text: decisionJson("Vou abrir o chamado.", { intent: "OPEN_TICKET" }) };
+    const withArticles = (articles: () => Promise<HelpArticle[]>) => ({ articles });
+
+    it("com artigo: responde com o artigo e cita, como na dúvida", async () => {
+      const text = "Confira se a impressora certa está selecionada e cancele os trabalhos presos na fila.";
+      const { runner } = setup(
+        [{ kind: "tool", toolName: "searchHelpCenter", input: { keywords: ["impressora", "imprimir"] } }, { kind: "text", text: decisionJson(text, { intent: "QUESTION", articleSlug: "impressora-nao-imprime" }) }],
+        withArticles(() => Promise.resolve([PRINTER])),
+      );
+      const result = await runner.runTurn(input("Minha impressora não imprime"));
+      assert.equal(result.content, `${text} ${articleNote("Impressora não imprime")}`);
+      assert.deepEqual(result.quickReplies, HELP_QUICK_REPLIES);
+      assert.equal(result.ticketDraft, null);
+    });
+
+    it("sem artigo: segue para draftTicket no mesmo turno, em 3 requisições", async () => {
+      const { runner, modelCalls } = setup([search, draft(), final], withArticles(() => Promise.resolve([])));
+      const result = await runner.runTurn(input("Minha VPN deu erro 809"));
+      assert.equal(result.content, "Quem está sendo afetado?");
+      assert.deepEqual(result.quickReplies, ["Só eu", "Minha equipe", "Toda a empresa", "Não sei"]);
+      assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["searchHelpCenter", "SUCCESS"], ["draftTicket", "SKIPPED"]]);
+      assert.equal(result.trace.sources, undefined);
+      assert.equal(modelCalls.length, 3);
+    });
+
+    it("artigo que não vale para o caso: proposta sem fonte nem respostas de ajuda, mesmo com slug do modelo", async () => {
+      const { runner } = setup([search, draft({ affectedScope: "INDIVIDUAL" }), { kind: "text", text: decisionJson("Reinstale o cliente.", { intent: "OPEN_TICKET", articleSlug: "vpn-erro-809" }) }], withArticles(() => Promise.resolve([VPN])));
+      const result = await runner.runTurn(input("Minha VPN deu erro 809 no Windows 11"));
+      assert.equal(result.ticketDraft?.kind, "CREATE");
+      assert.equal(result.trace.sources, undefined);
+      assert.equal(result.quickReplies, null);
+      assert.ok(!/reinstal/i.test(result.content));
+      assert.deepEqual(result.trace.actions.map((action) => action.tool), ["searchHelpCenter", "draftTicket"]);
+    });
+
+    it("central indisponível: a abertura segue com a pergunta de afetados", async () => {
+      const { runner } = setup([search, draft(), final], withArticles(() => Promise.reject(new KnowledgeUnavailableError())));
+      const result = await runner.runTurn(input("Minha VPN deu erro 809"));
+      assert.equal(result.content, "Quem está sendo afetado?");
+      assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["searchHelpCenter", "ERROR"], ["draftTicket", "SKIPPED"]]);
+    });
+
+    it("busca, aviso de parecido e resposta cabem nos 4 passos", async () => {
+      const { runner, modelCalls } = setup([search, draft(), final], { ...withArticles(() => Promise.resolve([])), findSimilar: () => Promise.resolve([{ ...ticket("INC-20311"), canReopen: false }]) });
+      const result = await runner.runTurn(input("Minha VPN deu erro 809"));
+      assert.match(result.content, /INC-20311/);
+      assert.ok(modelCalls.length <= 4);
+    });
+  });
+
+  it("as instruções pedem a busca também no relato de problema, e só na mensagem que traz o problema", () => {
+    const lines = buildInstructions("Marina").split("\n");
+    const rule = lines.find((line) => line.startsWith("- Central de ajuda:"));
+    assert.ok(rule);
+    assert.match(rule, /relat/);
+    assert.match(rule, /draftTicket, sem busca/);
+    assert.match(rule, /respostas às suas perguntas/);
+    const noMatch = lines.find((line) => line.startsWith("- NO_MATCH: não invente"));
+    assert.ok(noMatch);
+    assert.match(noMatch, /relato[^.]*draftTicket/);
   });
 
   it("as instruções pedem a busca, o slug e keywords curtas", async () => {

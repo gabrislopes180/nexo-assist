@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TICKET_CATEGORIES } from "@/shared/config/ticket-category";
 
 export const ticketPrioritySchema = z.enum([
   "CRITICAL",
@@ -6,14 +7,7 @@ export const ticketPrioritySchema = z.enum([
   "MEDIUM",
   "LOW",
 ]);
-export const ticketCategorySchema = z.enum([
-  "ACCESS",
-  "NETWORK_VPN",
-  "HARDWARE",
-  "SOFTWARE",
-  "EMAIL",
-  "OTHER",
-]);
+export const ticketCategorySchema = z.enum(TICKET_CATEGORIES);
 const ticketStatusSchema = z.enum([
   "WAITING_ANALYST",
   "IN_PROGRESS",

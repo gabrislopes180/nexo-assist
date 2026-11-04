@@ -17,6 +17,7 @@ import { getFirstName } from "@/shared/lib/get-first-name";
 import { Button } from "@/shared/ui/button";
 import { PaneLoading } from "@/shared/ui/pane-loading";
 import { PaneMessage } from "@/shared/ui/pane-message";
+import { ticketPanelErrorMode } from "../lib/ticket-panel-state";
 import { TicketDetailView } from "./ticket-detail-view";
 
 interface TicketPanelProps {
@@ -29,7 +30,7 @@ const DETAIL_TITLE_ID = "ticket-detail-title";
 
 /**
  * Pilha no painel: lista de chamados ⇄ detalhe de um chamado. Quem monta usa
- * `key={conversation.id}`, então trocar de conversa volta para a lista.
+ * A chave é própria do painel e da conversa, então trocar de conversa volta para a lista.
  */
 export function TicketPanel({ conversation, now, onClose }: TicketPanelProps) {
   const firstName = getFirstName(conversation.owner.name);
@@ -63,7 +64,8 @@ export function TicketPanel({ conversation, now, onClose }: TicketPanelProps) {
 
   const body = () => {
     if (isPending) return <PaneLoading label="Carregando chamados…" />;
-    if (isError || !data) {
+    const errorMode = ticketPanelErrorMode(isError, data !== undefined);
+    if (errorMode === "blocking") {
       return (
         <PaneMessage
           tone="error"
@@ -83,9 +85,27 @@ export function TicketPanel({ conversation, now, onClose }: TicketPanelProps) {
         </PaneMessage>
       );
     }
+    if (!data) return <PaneLoading label="Carregando chamados…" />;
     const others = sortOtherTickets(data.otherTickets);
     return (
       <>
+        {errorMode === "refresh" ? (
+          <div className="flex flex-col items-start gap-3">
+            <p role="alert" className="text-caption text-danger-text">
+              Não foi possível atualizar os chamados. Exibindo os dados
+              carregados anteriormente.
+            </p>
+            <Button
+              variant="secondary"
+              aria-disabled={isFetching || undefined}
+              onClick={() => {
+                if (!isFetching) void refetch();
+              }}
+            >
+              Tentar de novo
+            </Button>
+          </div>
+        ) : null}
         <section className="flex flex-col gap-3">
           <h3 className="text-caption font-medium text-ink-3">
             Desta conversa

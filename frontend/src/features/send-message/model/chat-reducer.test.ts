@@ -105,6 +105,7 @@ describe("chatReducer", () => {
       content: "Resposta",
       createdAt: "2026-10-16T17:20:00.000Z",
       steps: [{ label: "consultou seus chamados", failed: false }],
+      sources: [],
       lookup: null,
       selectedCode: null,
       draft: null,
