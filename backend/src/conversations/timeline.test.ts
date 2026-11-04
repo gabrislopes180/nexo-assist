@@ -34,4 +34,16 @@ describe("toTimelineMessage e a citação de artigo", () => {
     assert.equal(message.trace?.intent, "QUESTION");
     assert.equal(message.trace?.sources, undefined);
   });
+
+  it("relê o trace persistido de uma transferência bloqueada pela política antiga", () => {
+    // A rejeição era persistida como texto livre, sem o código interno da ferramenta.
+    const actions = [{
+      tool: "transferToAnalyst",
+      summary: "Conversa devolvida por um analista: só um pedido explícito transfere; a conversa continua com o agent.",
+      status: "SKIPPED",
+    }];
+    const message = toTimelineMessage(agentRow({ ...trace, actions }));
+    assert.deepEqual(message.trace?.actions, actions);
+    assert.equal(message.trace?.reason, trace.reason);
+  });
 });

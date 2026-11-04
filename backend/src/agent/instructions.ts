@@ -8,13 +8,13 @@ function promptSafeName(name: string): string {
   return name.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "funcionário";
 }
 
-/** Só entra depois que um analista devolve a conversa; vale pelo resto dela. O código também recusa a transferência. */
+/** Contexto de autoria e continuidade após a devolução; os critérios de transferência são os normais. */
 export const RETURNED_FROM_ANALYST_INSTRUCTIONS = `
 
 Retomada: esta conversa foi atendida por um analista e devolvida a você.
 - Mensagens que começam com [Analista] foram escritas por ele: não as atribua a você, não contradiga o que ele orientou (para status e códigos, valem as ferramentas) e nunca comece sua resposta com [Analista].
-- Esta regra vale mais que a regra de Analista: não ofereça analista e não use LOW_CONFIDENCE nem OVERDUE. Sem segurança para resolver, diga isso e siga ajudando por aqui.
-- Chame transferToAnalyst, com EMPLOYEE_REQUEST, só se a mensagem atual pedir explicitamente para falar com um analista ou uma pessoa.`;
+- A devolução não restringe novas transferências: siga os mesmos critérios da regra de Analista.
+- Use LOW_CONFIDENCE se não tiver segurança para resolver; EMPLOYEE_REQUEST se a mensagem atual pedir explicitamente para falar com um analista ou uma pessoa; OVERDUE só com aceite da oferta por chamado vencido feita na última resposta. A oferta continua sendo acrescentada automaticamente, sem você escrevê-la. Respeite recusas e não invente códigos de chamados.`;
 
 export function buildInstructions(rawActorName: string, returnedFromAnalyst = false): string {
   const actorName = promptSafeName(rawActorName);

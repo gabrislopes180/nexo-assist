@@ -103,8 +103,8 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
           handoffs: recorder.handoffs(),
           articleSearches: recorder.articleSearches(),
           overdueOfferActive: requestContext.get("overdueOfferCode") !== null,
-          // Depois que um analista devolveu a conversa, o agent não oferece analista de novo.
-          suppressOverdueOffer: declinesPerson(input.message) || offerDeclinedIn(input.history) || input.returnedFromAnalyst,
+          // A recusa atual ou recente impede insistir na oferta, inclusive após a devolução.
+          suppressOverdueOffer: declinesPerson(input.message) || offerDeclinedIn(input.history),
         });
         if (!reply) throw new AgentUnavailableError();
         return { ...reply, quickReplies: reply.quickReplies ?? null, handoff: reply.handoff ?? null };

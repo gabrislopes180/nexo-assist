@@ -11,12 +11,12 @@
  */
 import { AgentUnavailableError } from "../chat/agent-runner.js";
 import type { HistoryMessage } from "../conversations/conversation-service.js";
-import type { TicketLookupCriteria, TicketLookupResult } from "../shared/chat.js";
+import type { HandoffProposal, TicketLookupCriteria, TicketLookupResult } from "../shared/chat.js";
 import { TicketServiceUnavailableError, type ResolvedTicketReader, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
 import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
 import { loadAgentConfig } from "./config.js";
 import { redirectReply, type RedirectArea } from "../knowledge/redirect-targets.js";
-import { articleNote, HELP_QUICK_REPLIES, OUT_OF_SCOPE_REPLY, WAITING_EMPLOYEE_NOTE } from "./trace.js";
+import { articleNote, HELP_QUICK_REPLIES, OUT_OF_SCOPE_REPLY, overdueOfferCodeFrom, overdueOfferText, WAITING_EMPLOYEE_NOTE } from "./trace.js";
 import { ARTICLES } from "../db/seed-data/articles.js";
 import { createKnowledgeService } from "../knowledge/knowledge-service.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
@@ -160,7 +160,7 @@ async function complementCases(cases: readonly ComplementCase[]): Promise<void> 
   }
 }
 
-/** Histórico de uma conversa que um analista atendeu e devolveu: o agent retoma sem oferecer analista. */
+/** Histórico de atendimento humano: a retomada mantém os critérios normais de transferência. */
 const RETURNED_HISTORY: HistoryMessage[] = [
   { authorType: "EMPLOYEE", content: "Minha impressora não imprime. Quero falar com um analista." },
   { authorType: "AGENT", content: "Transferi a conversa para um analista. Ele vai continuar o atendimento por aqui." },
@@ -172,24 +172,41 @@ const [overdueTicket] = LISTED.tickets;
 if (!overdueTicket?.overdue) throw new Error("O cenário de devolução precisa de um chamado vencido em LISTED");
 const OVERDUE_SINGLE: TicketLookupResult = { outcome: "SINGLE_MATCH", openTicketCount: 2, totalMatches: 1, tickets: [overdueTicket] };
 
-type ReturnedCase = { message: string; expectHandoff: boolean; lookup?: TicketLookupResult };
+const RETURNED_OFFER_HISTORY: HistoryMessage[] = [
+  ...RETURNED_HISTORY,
+  { authorType: "EMPLOYEE", content: "Como está o INC-20311?" },
+  { authorType: "AGENT", content: `O INC-20311 está em atendimento e com prazo vencido. ${overdueOfferText("INC-20311")}` },
+];
+
+type ReturnedCase = {
+  message: string;
+  allowedHandoffs: readonly (HandoffProposal["reason"] | null)[];
+  offerCode: string | null;
+  lookup?: TicketLookupResult;
+  history?: HistoryMessage[];
+};
 
 const RETURNED_CASES: readonly ReturnedCase[] = [
-  // Chamado vencido: sem a oferta de analista que a conversa normal acrescentaria.
-  { message: "Como está o INC-20311?", expectHandoff: false, lookup: OVERDUE_SINGLE },
-  // Pedido vago depois da devolução: o agent segue ajudando, sem transferir por baixa confiança.
-  { message: "A impressora voltou a dar um erro estranho e não sei o que fazer", expectHandoff: false },
-  { message: "Quero falar com um analista de novo", expectHandoff: true },
+  // Chamado vencido: oferece sem transferir antes do aceite, também após devolução.
+  { message: "Como está o INC-20311?", allowedHandoffs: [null], offerCode: "INC-20311", lookup: OVERDUE_SINGLE },
+  // Relato vago pode levar a esclarecimento/rascunho ou LOW_CONFIDENCE; a devolução não proíbe este motivo.
+  { message: "A impressora voltou a dar um erro estranho e não sei o que fazer", allowedHandoffs: [null, "LOW_CONFIDENCE"], offerCode: null },
+  { message: "Quero falar com um analista de novo", allowedHandoffs: ["EMPLOYEE_REQUEST"], offerCode: null },
+  // Aceites da oferta preservam OVERDUE, inclusive a resposta rápida que também parece pedido explícito.
+  ...["Sim", "Falar com um analista"].map((message): ReturnedCase => ({
+    message, allowedHandoffs: ["OVERDUE"], offerCode: null, history: RETURNED_OFFER_HISTORY,
+  })),
+  { message: "Não, obrigado", allowedHandoffs: [null], offerCode: null, history: RETURNED_OFFER_HISTORY },
 ];
 
 async function returnedCases(): Promise<void> {
-  for (const { message, expectHandoff, lookup } of RETURNED_CASES) {
+  for (const { message, allowedHandoffs, offerCode, lookup, history = RETURNED_HISTORY } of RETURNED_CASES) {
     lookupResult = lookup ?? NO_MATCH;
     metrics = undefined;
     try {
-      const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: true, actor: { id: OWNER, name: "Marina Costa" }, history: RETURNED_HISTORY, message });
-      const handoffOk = expectHandoff ? reply.handoff?.reason === "EMPLOYEE_REQUEST" : reply.handoff == null;
-      const verdict = handoffOk && !reply.content.includes("Quer que eu chame um analista?") && !/^\s*\[analista\]/i.test(reply.content);
+      const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: true, actor: { id: OWNER, name: "Marina Costa" }, history, message });
+      const handoffOk = allowedHandoffs.includes(reply.handoff?.reason ?? null);
+      const verdict = handoffOk && overdueOfferCodeFrom([reply.content]) === offerCode && !/^\s*\[analista\]/i.test(reply.content);
       if (!verdict) process.exitCode = 1;
       console.log(verdict ? "ok  " : "FALHA", message, JSON.stringify({ content: reply.content, handoff: reply.handoff?.reason ?? null, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
     } catch (error) {

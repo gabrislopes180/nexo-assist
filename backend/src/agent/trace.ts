@@ -517,7 +517,6 @@ const HANDOFF_REJECTION_REASON: Record<Extract<HandoffExecution, { outcome: "REJ
   OFFER_DECLINED: "O usuário recusou a oferta de analista; a conversa continua com o agent.",
   DECLINED: "O usuário disse que não quer falar com analista; a conversa continua com o agent.",
   NOT_REQUESTED: "Transferência recusada: o usuário não pediu analista; a conversa continua com o agent.",
-  RETURNED_BY_ANALYST: "Conversa devolvida por um analista: só um pedido explícito transfere; a conversa continua com o agent.",
   UNKNOWN_TICKET_CODE: "Resumo citou chamado não devolvido pelas ferramentas; a conversa continua com o agent.",
   UNAVAILABLE: "Transferência inválida; a conversa continua com o agent.",
 };

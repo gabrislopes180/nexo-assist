@@ -4,7 +4,7 @@ import type { HelpCenterSearchResult } from "../../shared/knowledge.js";
 /** Execução de `transferToAnalyst`. Recusada: a conversa continua com o agent. */
 export type HandoffExecution =
   | { outcome: "ACCEPTED"; proposal: HandoffProposal }
-  | { outcome: "REJECTED"; problem: "OVERDUE_NOT_ACCEPTED" | "OFFER_DECLINED" | "DECLINED" | "NOT_REQUESTED" | "RETURNED_BY_ANALYST" | "UNKNOWN_TICKET_CODE" | "UNAVAILABLE" };
+  | { outcome: "REJECTED"; problem: "OVERDUE_NOT_ACCEPTED" | "OFFER_DECLINED" | "DECLINED" | "NOT_REQUESTED" | "UNKNOWN_TICKET_CODE" | "UNAVAILABLE" };
 
 /** Por que `draftReopen` não propôs nada. `NOT_FOUND` cobre inexistente e alheio, sem distinguir. */
 export type ReopenBlock =
@@ -83,7 +83,7 @@ export type TurnContextValues = {
   offerDeclinedRecently: boolean;
   /** Códigos já citados pelo agent na conversa, que o resumo para o analista pode repetir. */
   knownCodes: readonly string[];
-  /** Um analista já devolveu a conversa: pelo resto dela, só um pedido explícito transfere. */
+  /** Um analista já devolveu a conversa: inclui instruções de autoria e continuidade na retomada. */
   returnedFromAnalyst: boolean;
   /** Título do artigo que o usuário disse não ter resolvido: o chamado novo leva "Já tentou: <título>." */
   triedArticle: string | null;

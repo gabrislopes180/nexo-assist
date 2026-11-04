@@ -1,1 +1,1 @@
-- [Conversa devolvida por analista](project_returned_from_analyst.md) — RETURNED_BY_ANALYST, normalizacao EMPLOYEE_REQUEST (todas conversas, exceto aceite de oferta), eval `returned`
+- [Conversa devolvida por analista](project_returned_from_analyst.md) — criterios normais de transferencia, autoria [Analista], normalizacao EMPLOYEE_REQUEST (exceto aceite de oferta OVERDUE), eval `returned`

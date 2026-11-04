@@ -222,18 +222,50 @@ describe("transferToAnalyst", () => {
   describe("conversa devolvida por um analista", () => {
     const returned = (message: string, extra: Context = {}) => contextOf({ ...extra, message, returnedFromAnalyst: true });
 
-    it("LOW_CONFIDENCE é recusado com RETURNED_BY_ANALYST", async () => {
+    it("LOW_CONFIDENCE permite uma proposta válida mesmo após devolução", async () => {
       const { context, recorder } = returned("A impressora voltou a falhar");
-      assert.deepEqual(await transferToAnalyst({ reason: "LOW_CONFIDENCE", summary: "Impressora falha." }, context), { outcome: "REJECTED", problem: "RETURNED_BY_ANALYST" });
-      assert.deepEqual(recorder.handoffs().at(-1), { outcome: "REJECTED", problem: "RETURNED_BY_ANALYST" });
+      const proposal = { reason: "LOW_CONFIDENCE", summary: "Impressora falha." } as const;
+      assert.deepEqual(await transferToAnalyst(proposal, context), { outcome: "ACCEPTED" });
+      const last = recorder.handoffs().at(-1);
+      assert.deepEqual(last, { outcome: "ACCEPTED", proposal });
+      assert.equal(handoffProposalSchema.safeParse(last?.outcome === "ACCEPTED" ? last.proposal : null).success, true);
     });
 
-    it("OVERDUE é recusado, mesmo com uma oferta aceita", async () => {
+    it("OVERDUE com oferta aceita continua válido após devolução", async () => {
       const accepted = returned("sim", { overdueOfferCode: "INC-20311" });
-      assert.deepEqual(await transferToAnalyst({ reason: "OVERDUE", summary: "INC-20311 vencido." }, accepted.context), { outcome: "REJECTED", problem: "RETURNED_BY_ANALYST" });
-      // OVERDUE forjado já cai na checagem anterior: a precedência do rótulo é intencional, a recusa é a mesma.
+      const proposal = { reason: "OVERDUE", summary: "INC-20311 vencido." } as const;
+      assert.deepEqual(await transferToAnalyst(proposal, accepted.context), { outcome: "ACCEPTED" });
+      assert.deepEqual(accepted.recorder.handoffs().at(-1), { outcome: "ACCEPTED", proposal });
+    });
+
+    it("OVERDUE sem oferta ou sem aceite continua bloqueado após devolução", async () => {
       const forged = returned("Meu chamado está atrasado");
       assert.deepEqual(await transferToAnalyst({ reason: "OVERDUE", summary: "x" }, forged.context), { outcome: "REJECTED", problem: "OVERDUE_NOT_ACCEPTED" });
+      const notAccepted = returned("A impressora voltou a falhar", { overdueOfferCode: "INC-20311" });
+      assert.deepEqual(await transferToAnalyst({ reason: "OVERDUE", summary: "INC-20311 vencido." }, notAccepted.context), { outcome: "REJECTED", problem: "OVERDUE_NOT_ACCEPTED" });
+    });
+
+    it("recusa atual continua bloqueando todos os motivos após devolução", async () => {
+      for (const reason of ["LOW_CONFIDENCE", "EMPLOYEE_REQUEST", "OVERDUE"] as const) {
+        const declined = returned("Não quero falar com analista");
+        assert.deepEqual(await transferToAnalyst({ reason, summary: "Impressora falha." }, declined.context), { outcome: "REJECTED", problem: "DECLINED" }, reason);
+        assert.deepEqual(declined.recorder.handoffs().at(-1), { outcome: "REJECTED", problem: "DECLINED" });
+        const offerDeclined = returned("Não, obrigado", { overdueOfferCode: "INC-20311" });
+        assert.deepEqual(await transferToAnalyst({ reason, summary: "INC-20311 vencido." }, offerDeclined.context), { outcome: "REJECTED", problem: "OFFER_DECLINED" }, reason);
+      }
+    });
+
+    it("recusa recente continua bloqueando LOW_CONFIDENCE após devolução", async () => {
+      const declined = returned("O erro continua", { offerDeclinedRecently: true });
+      assert.deepEqual(await transferToAnalyst({ reason: "LOW_CONFIDENCE", summary: "Impressora falha." }, declined.context), { outcome: "REJECTED", problem: "OFFER_DECLINED" });
+    });
+
+    it("códigos desconhecidos continuam rejeitados após devolução, inclusive por baixa confiança", async () => {
+      for (const reason of ["LOW_CONFIDENCE", "EMPLOYEE_REQUEST", "OVERDUE"] as const) {
+        const { context, recorder } = returned(reason === "LOW_CONFIDENCE" ? "O erro continua" : "Quero falar com um analista", { knownCodes: ["INC-20311"] });
+        assert.deepEqual(await transferToAnalyst({ reason, summary: "Problema no INC-99999." }, context), { outcome: "REJECTED", problem: "UNKNOWN_TICKET_CODE" }, reason);
+        assert.deepEqual(recorder.handoffs().at(-1), { outcome: "REJECTED", problem: "UNKNOWN_TICKET_CODE" });
+      }
     });
 
     it("EMPLOYEE_REQUEST com pedido explícito continua transferindo", async () => {
@@ -255,16 +287,24 @@ describe("transferToAnalyst", () => {
       assert.equal(last?.outcome === "ACCEPTED" ? last.proposal.reason : null, "EMPLOYEE_REQUEST");
     });
 
-    it("oferta de antes da devolução aceita com pedido explícito: transfere como EMPLOYEE_REQUEST", async () => {
+    it("pedido explícito em resposta à oferta aceita mantém OVERDUE após devolução", async () => {
       const { context, recorder } = returned("Falar com um analista", { overdueOfferCode: "INC-20311" });
       assert.deepEqual(await transferToAnalyst({ reason: "OVERDUE", summary: "INC-20311 vencido." }, context), { outcome: "ACCEPTED" });
       const last = recorder.handoffs().at(-1);
-      assert.equal(last?.outcome === "ACCEPTED" ? last.proposal.reason : null, "EMPLOYEE_REQUEST");
+      assert.equal(last?.outcome === "ACCEPTED" ? last.proposal.reason : null, "OVERDUE");
     });
 
     it("EMPLOYEE_REQUEST sem pedido segue NOT_REQUESTED", async () => {
       const { context } = returned("A impressora voltou a falhar");
       assert.deepEqual(await transferToAnalyst(request, context), { outcome: "REJECTED", problem: "NOT_REQUESTED" });
+    });
+
+    it("execute do Mastra também aceita LOW_CONFIDENCE com returnedFromAnalyst true", async () => {
+      const tool = createTransferToAnalystTool();
+      const { context, recorder } = returned("Não consigo resolver o erro");
+      const proposal = { reason: "LOW_CONFIDENCE", summary: "Erro sem diagnóstico." } as const;
+      assert.deepEqual(await tool.execute?.(proposal, { requestContext: context as RequestContext }), { outcome: "ACCEPTED" });
+      assert.deepEqual(recorder.handoffs().at(-1), { outcome: "ACCEPTED", proposal });
     });
   });
 

@@ -198,7 +198,7 @@ Enquanto a conversa está com analista (`WAITING_ANALYST` ou `WITH_ANALYST`), `P
 
 - **Limite:** a mensagem ao analista não conta em `messageCount` e é aceita mesmo com a cota em 0. A cota é de custo do LLM, então só as mensagens ao agent gastam.
 - **Volta ao agent:** depois que o analista devolve a conversa, o próximo `POST /chat` volta a ir ao agent, com a cota de onde parou antes da transferência. Só com as 30 mensagens ao agent já usadas ele recebe `409 CONVERSATION_MESSAGE_LIMIT_REACHED`, e o funcionário abre outra conversa.
-- **Devolvida por quem assumiu:** se um analista assumiu e depois devolveu, o agent passa a transferir de novo só com pedido explícito do funcionário. Devolvida da fila sem ninguém assumir, o agent segue normal, a menos que a conversa já tenha sido devolvida antes por quem assumiu.
+- **Devolvida por quem assumiu:** o agent considera as orientações do analista no histórico e mantém os critérios normais de transferência: pedido explícito (`EMPLOYEE_REQUEST`), baixa confiança (`LOW_CONFIDENCE`) ou aceite de uma oferta por chamado vencido (`OVERDUE`). A oferta por vencimento continua automática; recusas e validação dos códigos continuam valendo. Devolver da fila sem ninguém assumir também mantém esses critérios.
 - **Encerrada pelo analista:** `POST /chat` responde `409 CONVERSATION_CLOSED`.
 
 ### Mensagens da linha do tempo
@@ -332,7 +332,7 @@ Rotas em `/console`, só para usuários com papel `ANALYST`. Quem não é analis
 |---|---|---|---|
 | Assumir | `WAITING_ANALYST` | Vai para `WITH_ANALYST` com o analista da sessão | `TAKEOVER`: "`<Primeiro nome>` assumiu a conversa" |
 | Responder | `WITH_ANALYST`, assumida por mim | Grava a mensagem `ANALYST` | |
-| Devolver | `WAITING_ANALYST`, ou `WITH_ANALYST` assumida por mim | Volta a `WITH_AGENT` e limpa analista e transferência. Só a devolução de quem assumiu liga o modo "devolvida por analista" do agent | `RETURNED`: "Conversa devolvida ao agent" |
+| Devolver | `WAITING_ANALYST`, ou `WITH_ANALYST` assumida por mim | Volta a `WITH_AGENT` e limpa analista e transferência. A devolução de quem assumiu registra o contexto de atendimento humano para a retomada, sem restringir novas transferências | `RETURNED`: "Conversa devolvida ao agent" |
 | Encerrar | `WITH_ANALYST`, assumida por mim | Vai para `CLOSED`; o chamado não muda, e analista e transferência ficam como registro | `CLOSED`: "`<Primeiro nome>` encerrou o atendimento" |
 
 **Concorrência e idempotência:**

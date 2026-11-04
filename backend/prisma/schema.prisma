@@ -191,7 +191,7 @@ model Conversation {
   updatedAt         DateTime           @updatedAt
   closedAt          DateTime?
   assignedAt        DateTime? // quando o analista atual assumiu; null fora de WITH_ANALYST (mantido em CLOSED)
-  returnedToAgentAt DateTime? // última devolução por um analista que assumiu; liga a política "só pedido explícito" no agent
+  returnedToAgentAt DateTime? // última devolução por um analista que assumiu; informa o contexto de retomada ao agent
 
   owner        User          @relation("ConversationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   analyst      User?         @relation("ConversationAnalyst", fields: [analystId], references: [id], onDelete: SetNull)

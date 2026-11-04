@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { AgentUnavailableError, type AgentTurnInput } from "../chat/agent-runner.js";
-import { proposedAnyDraftSchema, proposedCreateDraftSchema, type SimilarTicket, type TicketLookupCriteria, type TicketLookupResult, type TicketSummary } from "../shared/chat.js";
+import { handoffProposalSchema, proposedAnyDraftSchema, proposedCreateDraftSchema, type SimilarTicket, type TicketLookupCriteria, type TicketLookupResult, type TicketSummary } from "../shared/chat.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import { TicketServiceUnavailableError, type ResolvedTicketReader, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
 import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
@@ -720,25 +720,83 @@ describe("decisões do agent (modelo fake)", () => {
         { authorType: "EMPLOYEE" as const, content: "Obrigado!" },
       ];
 
-      it("chamado vencido: não acrescenta a oferta de analista", async () => {
+      it("chamado vencido após devolução: acrescenta oferta e atalhos sem transferir antes do aceite", async () => {
         const { runner } = setup([{ kind: "tool", input: { code: "INC-20311" } }, { kind: "text", text: decisionJson("O chamado INC-20311 está aguardando analista e com prazo vencido.") }], {
           tickets: () => Promise.resolve(OVERDUE_SINGLE),
         });
-        const result = await runner.runTurn(input("Como está o INC-20311?", returned));
-        assert.ok(!result.content.includes("Quer que eu chame um analista?"));
-        assert.equal(overdueOfferCodeFrom([result.content]), null);
-        assert.equal(result.quickReplies, null);
+        const result = await runner.runTurn(input("Como está o INC-20311?", { ...returned, history: analystHistory }));
+        assert.ok(result.content.includes("Quer que eu chame um analista?"));
+        assert.equal(overdueOfferCodeFrom([result.content]), "INC-20311");
+        assert.deepEqual(result.quickReplies, ["Falar com um analista", "Não, obrigado"]);
+        assert.equal(result.handoff, null);
       });
 
-      it("LOW_CONFIDENCE: não transfere, e o trace diz por quê", async () => {
+      for (const [message, reason] of [["Sim", "OVERDUE"], ["Falar com um analista", "EMPLOYEE_REQUEST"], ["Sim, confirmo", "LOW_CONFIDENCE"]] as const) {
+        it(`oferta gerada após devolução e aceita com "${message}" preserva OVERDUE mesmo se o modelo propõe ${reason}`, async () => {
+          const { runner } = setup([
+            { kind: "tool", input: { code: "INC-20311" } },
+            { kind: "text", text: decisionJson("O INC-20311 está com prazo vencido.") },
+            transfer({ reason, summary: "INC-20311 vencido; funcionário aceitou a oferta de analista." }),
+            say("Ok"),
+          ], { tickets: () => Promise.resolve(OVERDUE_SINGLE) });
+          const question = "Como está o INC-20311?";
+          const offered = await runner.runTurn(input(question, { ...returned, history: analystHistory }));
+          assert.equal(overdueOfferCodeFrom([offered.content]), "INC-20311");
+          assert.equal(offered.handoff, null);
+          const result = await runner.runTurn(input(message, {
+            ...returned,
+            history: [...analystHistory, { authorType: "EMPLOYEE", content: question }, { authorType: "AGENT", content: offered.content }],
+          }));
+          assert.deepEqual(result.handoff, { reason: "OVERDUE", summary: "INC-20311 vencido; funcionário aceitou a oferta de analista." });
+          assert.equal(result.trace.actions.find((action) => action.tool === "transferToAnalyst")?.status, "SUCCESS");
+          assert.match(result.content, /^Transferi a conversa/);
+          assert.equal(result.quickReplies, null);
+        });
+      }
+
+      for (const recentDecline of [false, true]) {
+        it(`recusa ${recentDecline ? "recente" : "atual"} ainda suprime oferta por vencimento após devolução`, async () => {
+          const { runner } = setup([
+            { kind: "tool", input: { code: "INC-20311" } },
+            { kind: "text", text: decisionJson("O INC-20311 está com prazo vencido.") },
+          ], { tickets: () => Promise.resolve(OVERDUE_SINGLE) });
+          const history = recentDecline
+            ? [...analystHistory, ...offerHistory, { authorType: "EMPLOYEE" as const, content: "Não, obrigado" }, { authorType: "AGENT" as const, content: "Tudo bem, seguimos por aqui." }]
+            : analystHistory;
+          const result = await runner.runTurn(input(recentDecline ? "Como está o INC-20311?" : "Não quero analista, só o status do INC-20311", { ...returned, history }));
+          assert.equal(overdueOfferCodeFrom([result.content]), null);
+          assert.equal(result.quickReplies, null);
+          assert.equal(result.handoff, null);
+        });
+      }
+
+      it("LOW_CONFIDENCE proposto pelo modelo fake transfere após devolução e registra sucesso", async () => {
         const { runner } = setup([transfer({ reason: "LOW_CONFIDENCE", summary: "Impressora ainda falha." }), say("Vamos ver juntos: a luz de erro da impressora está acesa?", "OTHER")]);
         const result = await runner.runTurn(input("A impressora voltou a falhar", { ...returned, history: analystHistory }));
-        assert.equal(result.handoff, null);
-        assert.ok(!/^Transferi/.test(result.content));
+        assert.deepEqual(result.handoff, { reason: "LOW_CONFIDENCE", summary: "Impressora ainda falha." });
+        assert.match(result.content, /^Transferi a conversa/);
+        assert.equal(handoffProposalSchema.safeParse(result.handoff).success, true);
         const action = result.trace.actions.find((item) => item.tool === "transferToAnalyst");
-        assert.equal(action?.status, "SKIPPED");
-        assert.match(action?.summary ?? "", /devolvida por um analista/);
+        assert.equal(action?.status, "SUCCESS");
+        assert.match(action?.summary ?? "", /Transferência para analista proposta/);
       });
+
+      for (const { name, message, reason, summary, history, expected } of [
+        { name: "recusa explícita", message: "Não quero falar com analista", reason: "LOW_CONFIDENCE", summary: "Impressora falha.", history: analystHistory, expected: /não quer falar com analista/ },
+        { name: "oferta recusada", message: "Não, obrigado", reason: "OVERDUE", summary: "INC-20311 vencido.", history: offerHistory, expected: /recusou a oferta/ },
+        { name: "vencimento sem oferta", message: "O chamado está atrasado", reason: "OVERDUE", summary: "Prazo vencido.", history: analystHistory, expected: /sem oferta aceita/ },
+        { name: "vencimento sem aceite", message: "A impressora ainda falha", reason: "OVERDUE", summary: "INC-20311 vencido.", history: offerHistory, expected: /sem oferta aceita/ },
+        { name: "código desconhecido", message: "A impressora ainda falha", reason: "LOW_CONFIDENCE", summary: "Erro no INC-99999.", history: analystHistory, expected: /não devolvido pelas ferramentas/ },
+      ]) {
+        it(`${name} continua bloqueando a transferência após devolução`, async () => {
+          const { runner } = setup([transfer({ reason, summary }), say("Posso continuar ajudando por aqui.", "OTHER")]);
+          const result = await runner.runTurn(input(message, { ...returned, history }));
+          assert.equal(result.handoff, null);
+          const action = result.trace.actions.find((item) => item.tool === "transferToAnalyst");
+          assert.equal(action?.status, "SKIPPED");
+          assert.match(action?.summary ?? "", expected);
+        });
+      }
 
       it("pedido explícito continua transferindo, e o resumo pode citar o código trazido pelo analista", async () => {
         const { runner } = setup([transfer({ reason: "EMPLOYEE_REQUEST", summary: "Impressora segue falhando; o analista abriu o INC-30500." }), say("Ok")]);
@@ -753,11 +811,21 @@ describe("decisões do agent (modelo fake)", () => {
         assert.equal(result.content, "De nada! Qualquer coisa, estou por aqui.");
       });
 
-      it("instrução de retomada só entra na conversa devolvida", async () => {
+      it("prompt de retomada mantém autoria do analista e critérios normais de transferência", async () => {
         const back = setup([say("Oi.", "OTHER")]);
         await back.runner.runTurn(input("Oi", returned));
         assert.ok(back.modelCalls[0]);
-        assert.match(promptText(back.modelCalls[0]), /devolvida a você/);
+        const prompt = promptText(back.modelCalls[0]);
+        assert.match(prompt, /devolvida a você/);
+        assert.match(prompt, /Mensagens que começam com \[Analista\] foram escritas por ele/);
+        assert.match(prompt, /não contradiga o que ele orientou/);
+        assert.match(prompt, /A devolução não restringe novas transferências/);
+        assert.match(prompt, /Use LOW_CONFIDENCE se não tiver segurança para resolver/);
+        assert.match(prompt, /EMPLOYEE_REQUEST se a mensagem atual pedir explicitamente/);
+        assert.match(prompt, /OVERDUE só com aceite da oferta por chamado vencido feita na última resposta/);
+        assert.match(prompt, /oferta continua sendo acrescentada automaticamente/);
+        assert.match(prompt, /Respeite recusas e não invente códigos/);
+        assert.doesNotMatch(prompt, /não use LOW_CONFIDENCE nem OVERDUE|Esta regra vale mais que a regra de Analista|não ofereça analista/);
         const fresh = setup([say("Oi.", "OTHER")]);
         await fresh.runner.runTurn(input("Oi"));
         assert.ok(fresh.modelCalls[0]);

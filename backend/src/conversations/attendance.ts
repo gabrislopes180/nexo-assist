@@ -102,8 +102,8 @@ export async function replyAsAnalyst(
 
 /**
  * Em espera (sem assumir) ou assumida por mim, de volta ao agent. Não é idempotente: a segunda chamada vê WITH_AGENT.
- * Só a devolução de quem assumiu grava `returnedToAgentAt` (o modo "devolvida por analista" do agent);
- * sem ninguém assumir, o agent volta ao normal e uma devolução anterior, se houver, continua valendo.
+ * Só a devolução de quem assumiu grava `returnedToAgentAt` (o contexto de retomada após atendimento humano);
+ * sem ninguém assumir, o timestamp de uma devolução anterior, se houver, é preservado.
  */
 export async function returnToAgent(tx: Tx, { conversationId, analyst, now }: Action): Promise<AttendanceResult> {
   const data = {

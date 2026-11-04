@@ -8,7 +8,7 @@ export type AgentTurnInput = {
   actor: { id: string; name: string };
   history: HistoryMessage[];
   message: string;
-  /** Um analista já devolveu esta conversa: o agent só transfere por pedido explícito. */
+  /** Um analista já devolveu esta conversa: informa o contexto de retomada ao agent. */
   returnedFromAnalyst: boolean;
 };
 

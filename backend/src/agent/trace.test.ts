@@ -260,11 +260,11 @@ describe("actionsFrom", () => {
     assert.deepEqual(actionsFrom([]), []);
   });
 
-  it("transferência recusada por conversa devolvida explica a política", () => {
-    const [action] = actionsFrom([], [], [{ outcome: "REJECTED", problem: "RETURNED_BY_ANALYST" }]);
+  it("transferência por vencimento sem aceite explica a recusa", () => {
+    const [action] = actionsFrom([], [], [{ outcome: "REJECTED", problem: "OVERDUE_NOT_ACCEPTED" }]);
     assert.deepEqual(action, {
       tool: "transferToAnalyst",
-      summary: "Conversa devolvida por um analista: só um pedido explícito transfere; a conversa continua com o agent.",
+      summary: "Transferência por prazo vencido sem oferta aceita; a conversa continua com o agent.",
       status: "SKIPPED",
     });
   });
