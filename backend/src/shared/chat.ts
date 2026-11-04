@@ -158,7 +158,7 @@ export type ChatConversationView = {
   status: ConversationStatus;
   messageCount: number;
   messageLimit: number;
-  /** Cota com o agent; com analista a mensagem é aceita mesmo em 0. */
+  /** Cota com o agent. Mensagens ao analista não contam e são aceitas mesmo em 0. */
   remainingMessages: number;
   analyst: Person | null;
 };

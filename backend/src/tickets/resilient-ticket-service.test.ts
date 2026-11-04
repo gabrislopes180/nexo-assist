@@ -128,7 +128,7 @@ describe("leituras novas resilientes", () => {
     await assert.rejects(resilient.findSimilarTickets("dono", ["a"], NOW), TicketServiceUnavailableError);
     await assert.rejects(resilient.ensureAvailable(), TicketServiceUnavailableError);
     await assert.rejects(resilient.findResolvedTicketByCode("dono", "INC-1", NOW), TicketServiceUnavailableError);
-    await assert.rejects(resilient.listOwnerTickets("dono"), TicketServiceUnavailableError);
+    await assert.rejects(resilient.listOwnerTickets("dono", new Date()), TicketServiceUnavailableError);
   });
 
   it("com a simulação down ficam indisponíveis", async () => {
@@ -137,7 +137,7 @@ describe("leituras novas resilientes", () => {
     await assert.rejects(simulated.findSimilarTickets("dono", ["a"], NOW), TicketServiceUnavailableError);
     await assert.rejects(simulated.ensureAvailable(), TicketServiceUnavailableError);
     await assert.rejects(simulated.findResolvedTicketByCode("dono", "INC-1", NOW), TicketServiceUnavailableError);
-    await assert.rejects(simulated.listOwnerTickets("dono"), TicketServiceUnavailableError);
+    await assert.rejects(simulated.listOwnerTickets("dono", new Date()), TicketServiceUnavailableError);
   });
 });
 

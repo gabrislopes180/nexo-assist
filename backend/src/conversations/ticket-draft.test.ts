@@ -7,6 +7,7 @@ import type { ConversationStatus, TicketStatus } from "../generated/prisma/enums
 import type { ProposedTicketDraft } from "../shared/chat.js";
 import { complementDraftSchema } from "../shared/conversation-draft.js";
 import { agentTraceSchema, type AgentTrace } from "../shared/transparency.js";
+import { computeDueAt } from "../tickets/sla.js";
 import { ConversationNotWithAgentError, createConversationService, type ConversationService } from "./conversation-service.js";
 import { DraftKindMismatchError, DraftNotFoundError, TicketNotOpenError } from "./ticket-draft.js";
 
@@ -190,15 +191,34 @@ describe("rascunho de complemento", () => {
       assert.equal((await client.conversation.findUniqueOrThrow({ where: { id: conversationId } })).messageCount, 1);
     });
 
-    it("em WAITING_EMPLOYEE só comenta, sem mudar status nem prazo", async () => {
+    it("em WAITING_EMPLOYEE: comenta e o sistema devolve à fila do analista com janela nova", async () => {
       await createTicket("WAITING_EMPLOYEE", null);
+      const { conversationId, draftId } = await conversationWithDraft();
+      const { ticket } = await confirm(draftId);
+      assert.equal(ticket.status, "WAITING_ANALYST");
+      assert.equal(ticket.dueAt, computeDueAt("MEDIUM", T1).toISOString());
+      const stored = await client.ticket.findUniqueOrThrow({ where: { id: ticketId } });
+      assert.equal(stored.status, "WAITING_ANALYST");
+      assert.equal(stored.slaStartedAt?.toISOString(), T1.toISOString());
+      assert.equal(stored.dueAt?.toISOString(), computeDueAt("MEDIUM", T1).toISOString());
+      assert.equal(stored.updatedAt.toISOString(), T1.toISOString());
+      const events = await client.ticketEvent.findMany({ where: { ticketId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+      assert.deepEqual(
+        events.map((event) => [event.type, event.actorType, event.actorId, event.fromStatus, event.toStatus, event.conversationId]),
+        [
+          ["COMMENT", "EMPLOYEE", ownerId, null, null, conversationId],
+          ["STATUS_CHANGED", "SYSTEM", null, "WAITING_EMPLOYEE", "WAITING_ANALYST", conversationId],
+        ],
+      );
+      assert.equal(events[1]?.dueAt?.toISOString(), computeDueAt("MEDIUM", T1).toISOString());
+    });
+
+    it("fora de WAITING_EMPLOYEE o complemento não muda o status", async () => {
+      await createTicket("IN_PROGRESS");
       const { draftId } = await conversationWithDraft();
       const { ticket } = await confirm(draftId);
-      assert.equal(ticket.status, "WAITING_EMPLOYEE");
-      const stored = await client.ticket.findUniqueOrThrow({ where: { id: ticketId } });
-      assert.equal(stored.status, "WAITING_EMPLOYEE");
-      assert.equal(stored.dueAt, null);
-      assert.equal(stored.slaStartedAt, null);
+      assert.equal(ticket.status, "IN_PROGRESS");
+      assert.deepEqual((await eventsOf()).map((event) => event.type), ["COMMENT"]);
     });
 
     it("recusa dono errado igual a rascunho inexistente, sem efeitos", async () => {

@@ -24,6 +24,7 @@ describe("getChatConversation", () => {
           content: "Rafael assumiu a conversa",
           createdAt: "2026-11-03T10:12:00.000Z",
           trace: null,
+          systemKind: "TAKEOVER",
         },
       ],
     };

@@ -1,2 +1,2 @@
 - [Papéis do seed](project_seed_roles.md) — users.ts é a fonte dos papéis; README alinhado em 2026-11-03; C3 tem dono analista
-- [Testes e queda do libsql](project_test_quirks.md) — exit 3221225477 por arquivo é conhecido; rode de novo antes de investigar
+- [Testes e queda do libsql](project_test_quirks.md) — exit 3221225477 por arquivo é conhecido; git stash pop vira CRLF

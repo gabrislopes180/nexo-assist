@@ -8,7 +8,7 @@ import { trackModelCalls, type ModelCallStats } from "./model-calls.js";
 import { declinesPerson } from "./tools/handoff-intent.js";
 import { createNexoAgent, type NexoAgentDeps } from "./nexo-agent.js";
 import { createTurnRecorder, type TurnContextValues } from "./tools/turn-recorder.js";
-import { codesShownAsDuplicates, composeReply, knownCodesFrom, llmDecisionSchema, offerDeclinedIn, overdueOfferCodeFrom, parseDecision, relatedCodeFrom } from "./trace.js";
+import { codesShownAsDuplicates, composeReply, knownCodesFrom, llmDecisionSchema, offerDeclinedIn, overdueOfferCodeFrom, parseDecision, relatedCodeFrom, triedArticleFrom } from "./trace.js";
 
 const MAX_STEPS = 4;
 const MODEL_SETTINGS = { maxOutputTokens: 1024, maxRetries: 1, temperature: 0 };
@@ -76,6 +76,7 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
       requestContext.set("offerDeclinedRecently", offerDeclinedIn(input.history));
       requestContext.set("knownCodes", knownCodesFrom(input.history));
       requestContext.set("returnedFromAnalyst", input.returnedFromAnalyst);
+      requestContext.set("triedArticle", triedArticleFrom(input.history, input.message));
       requestContext.set("recorder", recorder);
 
       const startedAt = Date.now();
@@ -100,6 +101,7 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
           executions: recorder.all(),
           drafts: recorder.drafts(),
           handoffs: recorder.handoffs(),
+          articleSearches: recorder.articleSearches(),
           overdueOfferActive: requestContext.get("overdueOfferCode") !== null,
           // Depois que um analista devolveu a conversa, o agent não oferece analista de novo.
           suppressOverdueOffer: declinesPerson(input.message) || offerDeclinedIn(input.history) || input.returnedFromAnalyst,

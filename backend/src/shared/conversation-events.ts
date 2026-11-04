@@ -8,6 +8,8 @@ export type ConversationChange = {
   messages: TimelineMessage[];
   /** Chamados do dono mudaram (confirmação de rascunho): o painel do console fica desatualizado. */
   ticketsChanged: boolean;
+  /** Chamado que mudou, quando se sabe qual (vai no tickets.changed). */
+  ticketCode?: string;
 };
 
 /** Nunca lança para quem publica: falha de entrega não desfaz o que já foi gravado. */

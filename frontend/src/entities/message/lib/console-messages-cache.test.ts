@@ -14,6 +14,7 @@ const message = (id: string, createdAt: string): TimelineMessage => ({
   content: id,
   createdAt,
   trace: null,
+  systemKind: null,
 });
 
 const m1 = message("m1", "2026-11-03T10:00:00.000Z");

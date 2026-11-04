@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createEventBus, type BusEvent, type BusEventInput } from "./event-bus.js";
 
-const tickets = (ownerId = "u1", conversationId = "c1"): BusEventInput => ({ type: "tickets.changed", ownerId, conversationId, data: null });
+const tickets = (ownerId = "u1", conversationId = "c1"): BusEventInput => ({ type: "tickets.changed", ownerId, conversationId, ticketCode: null, data: null });
 
 describe("barramento de eventos", () => {
   it("numera em sequência crescente com o bootId no id", () => {
@@ -54,7 +54,7 @@ describe("barramento de eventos", () => {
   it("o filtro do assinante decide o que ele recebe", () => {
     const bus = createEventBus({ bootId: "boot01" });
     const received: string[] = [];
-    bus.subscribe({ filter: (event) => event.ownerId === "u1", onEvent: (event) => received.push(event.conversationId) });
+    bus.subscribe({ filter: (event) => event.ownerId === "u1", onEvent: (event) => received.push(event.conversationId ?? "") });
     bus.push(tickets("u1", "c1"));
     bus.push(tickets("u2", "c2"));
     bus.push(tickets("u1", "c3"));

@@ -48,7 +48,7 @@ export type ResolvedTicketReader = {
 
 /** Chamados do dono para o painel do console: abertos por `updatedAt` desc, depois resolvidos por `resolvedAt` desc. */
 export type OwnerTicketReader = {
-  listOwnerTickets(ownerId: string): Promise<ConsoleTicket[]>;
+  listOwnerTickets(ownerId: string, now: Date): Promise<ConsoleTicket[]>;
 };
 
 /** Falha com TicketServiceUnavailableError quando o serviço não pode receber uma escrita. */
@@ -99,10 +99,10 @@ export function isOpenTicket<T extends { status: TicketStatus }>(ticket: T): tic
 
 export function createTicketService(client: Pick<PrismaClient, "ticket">): FullTicketService {
   return {
-    async listOwnerTickets(ownerId) {
+    async listOwnerTickets(ownerId, now) {
       const rows = await client.ticket.findMany({
         where: { ownerId },
-        select: { code: true, type: true, category: true, priority: true, status: true, title: true, createdAt: true, updatedAt: true, resolvedAt: true },
+        select: { code: true, type: true, category: true, priority: true, status: true, title: true, createdAt: true, updatedAt: true, resolvedAt: true, dueAt: true },
       });
       const open = rows.filter(isOpen).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
       const resolved = rows
@@ -118,6 +118,8 @@ export function createTicketService(client: Pick<PrismaClient, "ticket">): FullT
         title: ticket.title,
         createdAt: ticket.createdAt.toISOString(),
         resolvedAt: ticket.resolvedAt?.toISOString() ?? null,
+        dueAt: ticket.dueAt?.toISOString() ?? null,
+        overdue: isOverdue(ticket, now),
       }));
     },
 

@@ -11,7 +11,8 @@ import { REALTIME_DEFAULTS } from "./config.js";
 export type BusEventInput =
   | { type: "message.created"; ownerId: string; conversationId: string; data: TimelineMessage }
   | { type: "conversation.updated"; ownerId: string; conversationId: string; data: ConsoleRow }
-  | { type: "tickets.changed"; ownerId: string; conversationId: string; data: null };
+  /** Painel de chamados do dono desatualizado; conversationId null quando a mudança não veio de uma conversa. */
+  | { type: "tickets.changed"; ownerId: string; conversationId: string | null; ticketCode: string | null; data: null };
 
 export type BusEvent = BusEventInput & { id: string; seq: number };
 

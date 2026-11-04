@@ -304,7 +304,7 @@ function itemFromMessage(message: TimelineMessage): ChatItem {
         id: message.id,
         text: message.content,
         at: message.createdAt,
-        icon: systemEventIcon(message.content),
+        icon: systemEventIcon(message.systemKind),
       };
   }
 }

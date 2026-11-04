@@ -6,7 +6,9 @@ import { agentTraceSchema } from "../shared/transparency.js";
 import { TicketServiceUnavailableError, type ResolvedTicketReader, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
 import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
 import { decisionJson, fakeModel, type FakeStep } from "./testing/fake-model.js";
-import { overdueOfferCodeFrom, overdueOfferText, templateFor, windowExpiredText } from "./trace.js";
+import { articleNote, HELP_QUICK_REPLIES, overdueOfferCodeFrom, overdueOfferText, templateFor, windowExpiredText } from "./trace.js";
+import { KnowledgeUnavailableError } from "../knowledge/knowledge-service.js";
+import type { HelpArticle } from "../shared/knowledge.js";
 
 const ticket = (code: string): TicketSummary => ({
   code,
@@ -65,12 +67,14 @@ function fakeTickets(
   return { ticketService, calls, codeCalls, similarCalls, resolvedCalls };
 }
 
-function setup(steps: readonly FakeStep[], options: { tickets?: () => Promise<TicketLookupResult>; findByCode?: (code: string) => Promise<TicketSummary | null>; findSimilar?: () => Promise<SimilarTicket[]>; findResolved?: (code: string) => Promise<{ ticket: SimilarTicket; canReopen: boolean } | null>; timeoutMs?: number; onTurnMetrics?: (metrics: TurnMetrics) => void } = {}) {
+function setup(steps: readonly FakeStep[], options: { tickets?: () => Promise<TicketLookupResult>; findByCode?: (code: string) => Promise<TicketSummary | null>; findSimilar?: () => Promise<SimilarTicket[]>; findResolved?: (code: string) => Promise<{ ticket: SimilarTicket; canReopen: boolean } | null>; timeoutMs?: number; onTurnMetrics?: (metrics: TurnMetrics) => void; articles?: () => Promise<HelpArticle[]> } = {}) {
   const { model, calls: modelCalls } = fakeModel(steps);
   const { ticketService, calls: ticketCalls, codeCalls, similarCalls, resolvedCalls } = fakeTickets(options.tickets, options.findByCode, options.findSimilar, options.findResolved);
+  const articles = options.articles;
   const runner = createAgentRunner({
     model,
     ticketService,
+    ...(articles ? { knowledgeService: { searchArticles: () => articles() } } : {}),
     timeoutMs: options.timeoutMs ?? 30000,
     ...(options.onTurnMetrics ? { onTurnMetrics: options.onTurnMetrics } : {}),
   });
@@ -137,6 +141,27 @@ describe("decisões do agent (modelo fake)", () => {
     assert.equal(result.ticketLookup, null);
     assert.equal(result.trace.intent, "OUT_OF_SCOPE");
     assert.deepEqual(result.trace.actions, []);
+  });
+
+  it("fora de escopo com área: redirectTo atravessa a saída estruturada e o texto vem do código", async () => {
+    const text = JSON.stringify({ content: "Mande e-mail para ferias@empresa.com.", understood: "Quer tirar férias", intent: "OUT_OF_SCOPE", confidence: "HIGH", reason: "Assunto de RH", redirectTo: "RH" });
+    const { runner, ticketCalls } = setup([{ kind: "text", text }]);
+    const result = await runner.runTurn(input("Como peço férias?"));
+    assert.equal(ticketCalls.length, 0);
+    assert.equal(result.content, "Isso é com o RH. Fale com eles pelo Portal do Colaborador (menu RH) ou em rh@nexo.example.");
+    assert.deepEqual(result.trace.actions, [{ tool: "outOfScopeRedirect", summary: "Encaminhado para o RH.", status: "SUCCESS" }]);
+    assert.equal(agentTraceSchema.safeParse(result.trace).success, true);
+  });
+
+  it("instrui sobre redirectTo sem deixar o modelo escrever contatos", async () => {
+    const { runner, modelCalls } = setup([{ kind: "text", text: decisionJson("Oi.", { intent: "OTHER" }) }]);
+    await runner.runTurn(input("Oi"));
+    const [call] = modelCalls;
+    assert.ok(call);
+    const prompt = promptText(call);
+    assert.match(prompt, /redirectTo/);
+    assert.match(prompt, /holerite/);
+    assert.ok(!prompt.includes("@nexo.example"), "contatos não entram no prompt");
   });
 
   it("injeção de outro usuário: mesmo com a mensagem pedindo, o dono é o da sessão", async () => {
@@ -396,7 +421,7 @@ describe("decisões do agent (modelo fake)", () => {
     it("fora de escopo descarta proposta e respostas rápidas", async () => {
       const { runner } = setup([step(), { kind: "text", text: decisionJson("Só ajudo com suporte.", { intent: "OUT_OF_SCOPE" }) }]);
       const result = await runner.runTurn(input("Qual a capital da França?"));
-      assert.equal(result.content, "Só ajudo com suporte.");
+      assert.equal(result.content, "Só consigo ajudar com suporte de TI e chamados.");
       assert.equal(result.quickReplies, null);
       assert.equal(result.ticketDraft, null);
       assert.equal(result.trace.actions[0]?.tool, "draftTicket");
@@ -1123,5 +1148,71 @@ describe("decisões do agent (modelo fake)", () => {
     assert.equal(metrics[0]?.steps, 1);
     assert.equal(metrics[0]?.totalTokens, 15);
     assert.equal(typeof metrics[0]?.latencyMs, "number");
+  });
+});
+
+describe("central de ajuda (modelo fake)", () => {
+  const VPN: HelpArticle = {
+    slug: "vpn-erro-809",
+    title: "VPN com erro 809",
+    category: "NETWORK_VPN",
+    content: "VPN com erro 809: reinstale o cliente de VPN pelo portal de softwares e reinicie o computador. Vale apenas para Windows 10; no Windows 11, abra um chamado.",
+  };
+  const search: FakeStep = { kind: "tool", toolName: "searchHelpCenter", input: { keywords: ["vpn", "809", "windows 10"] } };
+  const answer = "Reinstale o cliente de VPN pelo portal de softwares e reinicie o computador.";
+
+  it("dúvida com artigo: cita o slug da busca, com fonte, nota e respostas rápidas", async () => {
+    const { runner, modelCalls } = setup([search, { kind: "text", text: decisionJson(answer, { intent: "QUESTION", articleSlug: "vpn-erro-809" }) }], { articles: () => Promise.resolve([VPN]) });
+    const result = await runner.runTurn(input("Minha VPN dá erro 809 no Windows 10"));
+    assert.equal(result.content, `${answer} ${articleNote("VPN com erro 809")}`);
+    assert.deepEqual(result.trace.sources, [{ kind: "ARTICLE", slug: "vpn-erro-809", title: "VPN com erro 809" }]);
+    assert.deepEqual(result.quickReplies, HELP_QUICK_REPLIES);
+    assert.deepEqual(result.trace.actions, [{ tool: "searchHelpCenter", summary: "Central de ajuda: 1 artigo encontrado (VPN com erro 809).", status: "SUCCESS" }]);
+    assert.equal(result.ticketLookup, null);
+    assert.equal(agentTraceSchema.safeParse(result.trace).success, true);
+    assert.equal(modelCalls.length, 2);
+  });
+
+  it("central indisponível: ação ERROR e o turno segue", async () => {
+    const { runner } = setup([search, { kind: "text", text: decisionJson("A central de ajuda está indisponível agora. Quer abrir um chamado?", { intent: "QUESTION" }) }], { articles: () => Promise.reject(new KnowledgeUnavailableError()) });
+    const result = await runner.runTurn(input("Minha VPN dá erro 809"));
+    assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["searchHelpCenter", "ERROR"]]);
+    assert.equal(result.trace.sources, undefined);
+    assert.match(result.content, /indisponível/);
+  });
+
+  it("slug inventado não vira fonte", async () => {
+    const { runner } = setup([search, { kind: "text", text: decisionJson(answer, { intent: "QUESTION", articleSlug: "vpn-geral" }) }], { articles: () => Promise.resolve([VPN]) });
+    const result = await runner.runTurn(input("Minha VPN dá erro 809 no Windows 10"));
+    assert.equal(result.trace.sources, undefined);
+    assert.equal(result.quickReplies, null);
+    assert.equal(result.trace.actions.at(-1)?.tool, "citeArticle");
+  });
+
+  it("'Não resolveu' depois do artigo: draftTicket com 'Já tentou: <título>' na descrição", async () => {
+    const draft: FakeStep = {
+      kind: "tool",
+      toolName: "draftTicket",
+      input: { title: "VPN com erro 809", description: "Erro 809 ao conectar na VPN no Windows 10.", type: "INC", category: "NETWORK_VPN", priority: "MEDIUM", priorityReason: "impede o acesso remoto", affectedScope: "INDIVIDUAL", keywords: ["vpn", "809"] },
+    };
+    const { runner } = setup([draft, { kind: "text", text: decisionJson("Preparei o chamado.", { intent: "OPEN_TICKET" }) }], { articles: () => Promise.resolve([VPN]) });
+    const history = [
+      { authorType: "EMPLOYEE" as const, content: "Minha VPN dá erro 809 no Windows 10" },
+      { authorType: "AGENT" as const, content: `${answer} ${articleNote("VPN com erro 809")}` },
+    ];
+    const result = await runner.runTurn(input("Não resolveu, abrir chamado", { history }));
+    assert.equal(result.ticketDraft?.kind, "CREATE");
+    assert.equal(result.ticketDraft?.kind === "CREATE" ? result.ticketDraft.description : null, "Erro 809 ao conectar na VPN no Windows 10.\n\nJá tentou: VPN com erro 809.");
+    assert.equal(result.trace.sources, undefined);
+  });
+
+  it("as instruções pedem a busca, o slug e keywords curtas", async () => {
+    const { runner, modelCalls } = setup([{ kind: "text", text: decisionJson("Oi", { intent: "OTHER" }) }]);
+    await runner.runTurn(input("Oi"));
+    const [call] = modelCalls;
+    assert.ok(call);
+    const prompt = promptText(call);
+    assert.match(prompt, /searchHelpCenter/);
+    assert.match(prompt, /articleSlug/);
   });
 });

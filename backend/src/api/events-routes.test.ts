@@ -8,6 +8,7 @@ import { issueSessionToken, SESSION_TTL_SECONDS } from "../auth/session-token.js
 import type { AgentRunner } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
 import { createConsoleService } from "../console/console-service.js";
+import { createConsoleTicketService } from "../console/console-ticket-service.js";
 import { createConversationQueries } from "../conversations/conversation-queries.js";
 import { createConversationService } from "../conversations/conversation-service.js";
 import { createTestDatabase } from "../db/test-database.js";
@@ -17,8 +18,11 @@ import { createEventBus, type EventBus } from "../realtime/event-bus.js";
 import { createFanout, type Fanout } from "../realtime/fanout.js";
 import type { ChatResponse, ProposedTicketDraft } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
+import { initialTimeline } from "../tickets/ticket-rules.js";
 import { createTicketService } from "../tickets/ticket-service.js";
+import { createTicketStatusService } from "../tickets/ticket-status-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleTicketService, unusedKnowledgeService } from "./test-support.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -178,6 +182,8 @@ describe("tempo real (SSE)", () => {
       authService: createAuthService(client),
       chatService,
       consoleService,
+      consoleTicketService: createConsoleTicketService({ statuses: createTicketStatusService(client), availability: tickets, publisher: fanout }),
+      knowledgeService: unusedKnowledgeService,
       eventBus: bus,
       streamOptions: { heartbeatMs: 60_000, maxStreamsPerUser: 5 },
     }).listen(0);
@@ -241,6 +247,8 @@ describe("tempo real (SSE)", () => {
           queries: createConversationQueries(client),
           tickets: createTicketService(client),
         }),
+        consoleTicketService: unusedConsoleTicketService,
+        knowledgeService: unusedKnowledgeService,
         eventBus: createEventBus(),
         streamOptions: { heartbeatMs: 50 },
       });
@@ -298,6 +306,8 @@ describe("tempo real (SSE)", () => {
           queries: createConversationQueries(client),
           tickets: createTicketService(client),
         }),
+        consoleTicketService: unusedConsoleTicketService,
+        knowledgeService: unusedKnowledgeService,
         eventBus: slowBus,
       }).listen(0);
       await new Promise((resolve) => slow.once("listening", resolve));
@@ -331,7 +341,7 @@ describe("tempo real (SSE)", () => {
           type: "message.created",
           ownerId: anaId,
           conversationId: "c",
-          data: { id: `m${i}`, conversationId: "c", authorType: "SYSTEM", author: null, content, createdAt: at, trace: null },
+          data: { id: `m${i}`, conversationId: "c", authorType: "SYSTEM", systemKind: "HANDOFF", author: null, content, createdAt: at, trace: null },
         });
         await new Promise((resolve) => setImmediate(resolve));
       }
@@ -362,6 +372,7 @@ describe("tempo real (SSE)", () => {
         message: {
           id: (created.data as { message: { id: string } }).message.id,
           authorType: "SYSTEM",
+          systemKind: "TAKEOVER",
           author: null,
           content: "Bruno assumiu a conversa",
           createdAt: (created.data as { message: { createdAt: string } }).message.createdAt,
@@ -460,6 +471,33 @@ describe("tempo real (SSE)", () => {
       assert.equal(((await employee.nextEvent()).data as { message: { id: string } }).message.id, body.employeeMessage.id);
     });
 
+    it("mudança de status pelo console: analistas recebem tickets.changed com o código; o funcionário não", async () => {
+      const { next: state } = initialTimeline({ type: "INC", priority: "MEDIUM", at: new Date() });
+      await client.ticket.create({
+        data: {
+          code: "INC-77",
+          type: "INC",
+          category: "SOFTWARE",
+          priority: "MEDIUM",
+          status: state.status,
+          title: "Excel trava",
+          description: "d",
+          affectedScope: "INDIVIDUAL",
+          ownerId: anaId,
+          updatedAt: state.updatedAt,
+          slaStartedAt: state.slaStartedAt,
+          dueAt: state.dueAt,
+        },
+      });
+      const analyst = await stream("/console/events", rafael);
+      const employee = await stream("/chat/events", ana);
+      const res = await post("/console/tickets/INC-77/status", bruno, { toStatus: "IN_PROGRESS", expectedStatus: "WAITING_ANALYST" });
+      assert.equal(res.status, 200);
+      const received = await analyst.nextEvent();
+      assert.deepEqual([received.event, received.data], ["tickets.changed", { conversationId: null, ownerId: anaId, ticketCode: "INC-77" }]);
+      await assert.rejects(employee.next(300), /tempo esgotado/);
+    });
+
     it("confirmação CRITICAL: os analistas recebem a SYSTEM da transferência e tickets.changed", async () => {
       agentDraft = CRITICAL_DRAFT;
       const turn = (await (await post("/chat", ana, { message: "O ponto caiu na filial." })).json()) as ChatResponse;
@@ -484,7 +522,7 @@ describe("tempo real (SSE)", () => {
           ["tickets.changed", null],
         ],
       );
-      assert.deepEqual(events[3]?.data, { conversationId: turn.conversation.id, ownerId: anaId });
+      assert.deepEqual(events[3]?.data, { conversationId: turn.conversation.id, ownerId: anaId, ticketCode: "INC-101" });
       const { conversation } = events[2]?.data as { conversation: { status: string; ticketCode: string } };
       assert.deepEqual([conversation.status, conversation.ticketCode], ["WAITING_ANALYST", "INC-101"]);
     });

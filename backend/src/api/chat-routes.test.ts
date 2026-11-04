@@ -17,7 +17,7 @@ import type { ChatResponse, TicketLookupResult } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
-import { unusedConsoleService } from "./test-support.js";
+import { unusedConsoleService, unusedConsoleTicketService, unusedKnowledgeService } from "./test-support.js";
 
 /** Turno com o agent: a resposta do agent está sempre presente. */
 type AgentChatResponse = ChatResponse & { message: NonNullable<ChatResponse["message"]> };
@@ -144,7 +144,7 @@ describe("POST /chat", () => {
         completeTurnFailure ? Promise.reject(completeTurnFailure) : real.completeTurn(reservation, message),
     };
     const chatService = createChatService({ queries: createConversationQueries(client), conversations, agentRunner: agent.runner, tickets: createTicketService(client) });
-    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService, consoleTicketService: unusedConsoleTicketService, knowledgeService: unusedKnowledgeService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -306,13 +306,13 @@ describe("POST /chat", () => {
     });
 
     for (const status of ["WAITING_ANALYST", "WITH_ANALYST"] as const) {
-      it(`em ${status} grava a mensagem sem chamar a LLM`, async () => {
+      it(`em ${status} grava a mensagem sem chamar a LLM e sem contar na cota`, async () => {
         const { id } = await createConversation({ status, messageCount: 2 });
         const res = await post({ message: "oi", conversationId: id });
         assert.equal(res.status, 200);
         assert.equal(((await res.json()) as AgentChatResponse).message, null);
         assert.equal(agent.inputs.length, 0);
-        assert.equal((await client.conversation.findUniqueOrThrow({ where: { id } })).messageCount, 3);
+        assert.equal((await client.conversation.findUniqueOrThrow({ where: { id } })).messageCount, 2);
       });
     }
   });

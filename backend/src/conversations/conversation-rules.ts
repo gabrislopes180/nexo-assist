@@ -1,4 +1,4 @@
-/** Regras de conversa (módulo puro). O limite é por conversa e conta só mensagens do funcionário. */
+/** Regras de conversa (módulo puro). O limite é por conversa e conta só mensagens do funcionário enviadas ao agent (WITH_AGENT). */
 export const CONVERSATION_MESSAGE_LIMIT = 30;
 
 export function remainingMessages(messageCount: number): number {

@@ -30,6 +30,6 @@ export function serializeFor(viewer: Viewer, event: BusEvent): SerializedEvent |
         data: { conversation: viewer.role === "ANALYST" ? toConsoleConversation(event.data, viewer.id) : toConversationView(event.data) },
       };
     case "tickets.changed":
-      return { ...base, data: { conversationId: event.conversationId, ownerId: event.ownerId } };
+      return { ...base, data: { conversationId: event.conversationId, ownerId: event.ownerId, ticketCode: event.ticketCode } };
   }
 }

@@ -8,6 +8,8 @@
  *   EventSource não mostra o status. Fica `down`, avisa o consumidor e reabre à
  *   mão com backoff (5, 10, 20, 40 s, teto de 60 s, jitter de até 20%), nunca na
  *   hora. Reabre com `?lastEventId=` para o servidor tentar o REPLAY.
+ * - `lastEventId` inicial: o consumidor que fechou e reabre (rota escondida e
+ *   mostrada de novo) continua do último evento, sem RESYNC.
  */
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "down";
 
@@ -31,6 +33,13 @@ export interface OpenEventStreamOptions {
   random?: () => number;
   /** Avisa quando a rede volta; devolve a função que cancela. */
   subscribeOnline?: (cb: () => void) => () => void;
+  /**
+   * Último id já processado por um stream anterior do mesmo consumidor. A
+   * primeira conexão já pede o REPLAY: sem buraco desde aquele evento.
+   */
+  lastEventId?: string | null;
+  /** Cada id novo; quem reabrir depois passa o último em `lastEventId`. */
+  onLastEventId?: (id: string) => void;
 }
 
 export interface EventStreamHandle {
@@ -76,13 +85,15 @@ export function openEventStream({
   createSource = defaultCreateSource,
   random = Math.random,
   subscribeOnline = defaultSubscribeOnline,
+  lastEventId: initialLastEventId = null,
+  onLastEventId,
 }: OpenEventStreamOptions): EventStreamHandle {
   let source: EventSourceLike | null = null;
   let status: StreamStatus | null = null;
   let closed = false;
   let consecutiveErrors = 0;
   let backoffAttempt = 0;
-  let lastEventId: string | null = null;
+  let lastEventId: string | null = initialLastEventId;
   let reopenTimer: ReturnType<typeof setTimeout> | null = null;
 
   const setStatus = (next: StreamStatus) => {
@@ -127,7 +138,10 @@ export function openEventStream({
     target.addEventListener(type, (event) => {
       // Eventos de um source antigo ou depois do close não valem.
       if (closed || target !== source) return;
-      if (event.lastEventId) lastEventId = event.lastEventId;
+      if (event.lastEventId) {
+        lastEventId = event.lastEventId;
+        onLastEventId?.(event.lastEventId);
+      }
       const parsed = parse(event.data);
       if (parsed.ok) handle(parsed.data);
     });

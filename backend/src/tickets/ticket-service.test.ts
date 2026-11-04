@@ -216,7 +216,7 @@ describe("TicketService", () => {
       await client.ticket.update({ where: { id: done1.id }, data: { resolvedAt: hoursFromNow(-30) } });
       await client.ticket.update({ where: { id: done2.id }, data: { resolvedAt: hoursFromNow(-10) } });
 
-      const tickets = await service.listOwnerTickets(ownerId);
+      const tickets = await service.listOwnerTickets(ownerId, NOW);
       assert.deepEqual(tickets.map((t) => t.code), ["INC-2", "INC-1", "INC-4", "INC-3"]);
       const [first] = tickets;
       assert.equal(first?.statusLabel, "Aguardando funcionário");
@@ -225,8 +225,18 @@ describe("TicketService", () => {
       assert.equal("description" in (first ?? {}), false);
     });
 
+    it("traz o prazo atual e se está vencido em relação a now", async () => {
+      await createTicket(ownerId, "INC-1", "IN_PROGRESS", hoursFromNow(-1));
+      await createTicket(ownerId, "INC-2", "IN_PROGRESS", hoursFromNow(2));
+      await createTicket(ownerId, "INC-3", "WAITING_EMPLOYEE", null);
+      const byCode = new Map((await service.listOwnerTickets(ownerId, NOW)).map((t) => [t.code, t]));
+      assert.deepEqual([byCode.get("INC-1")?.dueAt, byCode.get("INC-1")?.overdue], [hoursFromNow(-1).toISOString(), true]);
+      assert.deepEqual([byCode.get("INC-2")?.dueAt, byCode.get("INC-2")?.overdue], [hoursFromNow(2).toISOString(), false]);
+      assert.deepEqual([byCode.get("INC-3")?.dueAt, byCode.get("INC-3")?.overdue], [null, false]);
+    });
+
     it("sem chamados devolve lista vazia", async () => {
-      assert.deepEqual(await service.listOwnerTickets(ownerId), []);
+      assert.deepEqual(await service.listOwnerTickets(ownerId, NOW), []);
     });
   });
 

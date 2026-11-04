@@ -13,6 +13,8 @@ export interface TicketCardField {
   dot?: StatusTone;
   tone?: "warning";
   note?: string;
+  /** Na grade do painel, ocupa a linha inteira. */
+  wide?: boolean;
 }
 
 function dueField(ticket: TicketSummary): TicketCardField[] {

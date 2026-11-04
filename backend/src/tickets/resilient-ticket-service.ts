@@ -1,33 +1,15 @@
-import { setTimeout as delay } from "node:timers/promises";
+import { withRetry as retry, type ResilienceOptions } from "../shared/resilience.js";
 import { TicketServiceUnavailableError, type FullTicketService } from "./ticket-service.js";
 
-export type ResilienceOptions = { timeoutMs: number; attempts: number; retryDelayMs: number };
+export type { ResilienceOptions };
 
 const DEFAULT_RESILIENCE: ResilienceOptions = { timeoutMs: 3000, attempts: 2, retryDelayMs: 100 };
 
-/** Encerrar pelo timeout não cancela a tentativa; o `race` já trata a rejeição tardia dela. */
-async function withTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
-  });
-  try {
-    return await Promise.race([operation(), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const unavailable = () => new TicketServiceUnavailableError();
 
-/** Timeout e retry por tentativa. Qualquer falha vira erro tipado, sem detalhe interno. */
-async function withRetry<T>(operation: () => Promise<T>, options: ResilienceOptions): Promise<T> {
-  for (let attempt = 1; attempt <= options.attempts; attempt++) {
-    try {
-      return await withTimeout(operation, options.timeoutMs);
-    } catch {
-      if (attempt < options.attempts) await delay(options.retryDelayMs);
-    }
-  }
-  throw new TicketServiceUnavailableError();
+/** Qualquer falha vira erro tipado, sem detalhe interno. */
+function withRetry<T>(operation: () => Promise<T>, options: ResilienceOptions): Promise<T> {
+  return retry(operation, options, unavailable);
 }
 
 export function createResilientTicketService(service: FullTicketService, options: ResilienceOptions = DEFAULT_RESILIENCE): FullTicketService {
@@ -37,7 +19,7 @@ export function createResilientTicketService(service: FullTicketService, options
     findSimilarTickets: (ownerId, keywords, now, filter) =>
       withRetry(() => (filter ? service.findSimilarTickets(ownerId, keywords, now, filter) : service.findSimilarTickets(ownerId, keywords, now)), options),
     findResolvedTicketByCode: (ownerId, code, now) => withRetry(() => service.findResolvedTicketByCode(ownerId, code, now), options),
-    listOwnerTickets: (ownerId) => withRetry(() => service.listOwnerTickets(ownerId), options),
+    listOwnerTickets: (ownerId, now) => withRetry(() => service.listOwnerTickets(ownerId, now), options),
     ensureAvailable: () => withRetry(() => service.ensureAvailable(), options),
   };
 }

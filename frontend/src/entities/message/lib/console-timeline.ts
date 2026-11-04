@@ -29,11 +29,7 @@ const dayKey = (iso: string) => new Date(iso).toDateString();
 
 export function buildConsoleTimeline(
   messages: ConsoleMessageData[],
-  {
-    handoffAt,
-    ownerName,
-    now,
-  }: { handoffAt: string | null; ownerName: string; now: Date },
+  { ownerName, now }: { ownerName: string; now: Date },
 ): ConsoleTimelineItem[] {
   // sort é estável: mensagens no mesmo instante mantêm a ordem recebida.
   const sorted = [...messages].sort(
@@ -59,10 +55,7 @@ export function buildConsoleTimeline(
       items.push({
         kind: "event",
         key: message.id,
-        icon:
-          handoffAt !== null && message.createdAt === handoffAt
-            ? "transfer"
-            : systemEventIcon(message.content),
+        icon: systemEventIcon(message.systemKind),
         label: `${message.content} · ${formatTime(message.createdAt)}`,
       });
       previous = message;

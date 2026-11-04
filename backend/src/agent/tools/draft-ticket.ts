@@ -83,16 +83,24 @@ function unacknowledged(similar: readonly SimilarTicket[], acknowledged: readonl
 
 const MAX_DESCRIPTION = 2000;
 
-/** Garante a relação em código, sem repetir se o modelo já a escreveu e sem passar do limite. */
-function withRelation(description: string, relatedCode: string | null | undefined): string {
-  if (!relatedCode) return description;
-  const relation = `Relacionado ao ${relatedCode}.`;
-  if (description.includes(`Relacionado ao ${relatedCode}`)) return description;
-  const separator = "\n\n";
-  return `${description.slice(0, MAX_DESCRIPTION - relation.length - separator.length).trimEnd()}${separator}${relation}`;
+const SEPARATOR = "\n\n";
+
+/**
+ * Garante em código a relação com o chamado fora da janela e o artigo que o usuário já tentou.
+ * Linha que o modelo já escreveu (em qualquer caixa) não se repete; o corpo é cortado uma vez só, para caber todas.
+ */
+function withContext(description: string, context: Context): string {
+  const relatedCode = context?.get("relatedCode");
+  const triedArticle = context?.get("triedArticle");
+  const markers = [relatedCode ? `Relacionado ao ${relatedCode}` : null, triedArticle ? `Já tentou: ${triedArticle}` : null];
+  const lower = description.toLowerCase();
+  const lines = markers.flatMap((marker) => (marker && !lower.includes(marker.toLowerCase()) ? [`${marker}.`] : []));
+  if (lines.length === 0) return description;
+  const tail = lines.map((line) => `${SEPARATOR}${line}`).join("");
+  return `${description.slice(0, Math.max(0, MAX_DESCRIPTION - tail.length)).trimEnd()}${tail}`;
 }
 
-function toProposal(input: DraftTicketInput, { cappedReason = CAPPED_PRIORITY_REASON, ...scope }: Scope, relatedCode: string | null | undefined): DraftExecution {
+function toProposal(input: DraftTicketInput, { cappedReason = CAPPED_PRIORITY_REASON, ...scope }: Scope, context: Context): DraftExecution {
   const priority = capPriority(input.priority, scope.affectedScope);
   const parsed = proposedCreateDraftSchema.safeParse({
     kind: "CREATE",
@@ -101,7 +109,7 @@ function toProposal(input: DraftTicketInput, { cappedReason = CAPPED_PRIORITY_RE
     priority,
     priorityReason: priority === input.priority ? input.priorityReason : cappedReason,
     title: input.title,
-    description: withRelation(input.description, relatedCode),
+    description: withContext(input.description, context),
     ...scope,
   });
   // Proposta inválida que chegasse ao ChatService viraria 503 e desfaria o turno.
@@ -120,7 +128,7 @@ async function evaluate({ ticketService, now = () => new Date() }: ToolDeps, own
   const similar = unacknowledged(found, input.acknowledgedDuplicates, context?.get("shownCodes"));
   if (similar.length > 0) return { outcome: "POSSIBLE_DUPLICATE", similar };
   const scope = scopeOf(input, context?.get("message"));
-  return scope ? toProposal(input, scope, context?.get("relatedCode")) : { outcome: "NEEDS_AFFECTED_SCOPE" };
+  return scope ? toProposal(input, scope, context) : { outcome: "NEEDS_AFFECTED_SCOPE" };
 }
 
 /** Não grava nada: só registra a proposta no turno. A criação exige a confirmação pela rota própria. */

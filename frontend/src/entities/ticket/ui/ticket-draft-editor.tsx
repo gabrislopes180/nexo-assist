@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
+import { ChoiceChips } from "@/shared/ui/choice-chips";
 import { TextArea } from "@/shared/ui/text-area";
 import { TextField } from "@/shared/ui/text-field";
 import {
@@ -11,6 +11,11 @@ import {
   type DraftErrors,
 } from "../lib/ticket-draft-fields";
 import { affectedScopeSchema, type DraftValues } from "../model/ticket-draft";
+
+const AFFECTED_OPTIONS = affectedScopeSchema.options.map((scope) => ({
+  value: scope,
+  label: AFFECTED_LABELS[scope],
+}));
 
 interface TicketDraftEditorProps {
   initialValues: DraftValues;
@@ -77,34 +82,15 @@ export function TicketDraftEditor({
                 )
               }
             />
-            <fieldset className="flex flex-col gap-2">
-              <legend className="pb-2 text-label text-ink">Afetados</legend>
-              <div className="flex flex-wrap gap-1.5">
-                {affectedScopeSchema.options.map((scope) => (
-                  <label
-                    key={scope}
-                    className={cn(
-                      "cursor-pointer rounded-md border px-3 py-1.75 text-label has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-cta",
-                      values.affectedScope === scope
-                        ? "border-info bg-info-soft text-info-text"
-                        : "border-rule bg-paper text-ink hover:bg-desk",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="affectedScope"
-                      value={scope}
-                      checked={values.affectedScope === scope}
-                      onChange={() =>
-                        setValues({ ...values, affectedScope: scope })
-                      }
-                      className="sr-only"
-                    />
-                    {AFFECTED_LABELS[scope]}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+            <ChoiceChips
+              legend="Afetados"
+              name="affectedScope"
+              options={AFFECTED_OPTIONS}
+              value={values.affectedScope}
+              onChange={(scope) =>
+                setValues({ ...values, affectedScope: scope })
+              }
+            />
             <p className="text-caption text-ink-3">
               Tipo, categoria e prioridade ficam como no rascunho.
             </p>

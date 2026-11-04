@@ -4,6 +4,9 @@
  * `npm run eval:agent -- out-of-scope-after-list` roda só o cenário de duas mensagens e imprime o payload.
  * `npm run eval:agent -- complement` roda só os cenários de complemento.
  * `npm run eval:agent -- returned` roda só os cenários de conversa devolvida por um analista.
+ * `npm run eval:agent -- out-of-scope` roda só as fronteiras de encaminhamento (RH, Financeiro, Facilities, TI).
+ * `npm run eval:agent -- waiting` roda só o status de chamado aguardando o funcionário.
+ * `npm run eval:agent -- help` roda só a central de ajuda (citação, condição do artigo, sem artigo, "Não resolveu").
  */
 import { AgentUnavailableError } from "../chat/agent-runner.js";
 import type { HistoryMessage } from "../conversations/conversation-service.js";
@@ -11,6 +14,13 @@ import type { TicketLookupCriteria, TicketLookupResult } from "../shared/chat.js
 import { TicketServiceUnavailableError, type ResolvedTicketReader, type SimilarTicketReader, type TicketCodeReader, type TicketService } from "../tickets/ticket-service.js";
 import { createAgentRunner, type TurnMetrics } from "./agent-runner.js";
 import { loadAgentConfig } from "./config.js";
+import { redirectReply, type RedirectArea } from "../knowledge/redirect-targets.js";
+import { articleNote, HELP_QUICK_REPLIES, OUT_OF_SCOPE_REPLY, WAITING_EMPLOYEE_NOTE } from "./trace.js";
+import { ARTICLES } from "../db/seed-data/articles.js";
+import { createKnowledgeService } from "../knowledge/knowledge-service.js";
+import { normalizeSearchText } from "../knowledge/search-text.js";
+import type { AgentTurnResult } from "../chat/agent-runner.js";
+import type { HelpCenterSearchInput } from "../shared/knowledge.js";
 
 const OWNER = "marina-id";
 const NO_MATCH: TicketLookupResult = { outcome: "NO_MATCH", openTicketCount: 3, totalMatches: 0, tickets: [] };
@@ -58,12 +68,32 @@ const ticketService: TicketService & TicketCodeReader & SimilarTicketReader & Re
   },
 };
 
+/** Ranking real sobre os artigos do seed, em memória: o mesmo resultado que o banco semeado devolveria. */
+const articleSearches: HelpCenterSearchInput[] = [];
+const realKnowledge = createKnowledgeService({
+  listArticles: () =>
+    Promise.resolve(
+      ARTICLES.map((article) => {
+        const keywords = article.keywords.map((keyword) => keyword.toLowerCase());
+        return { ...article, keywords, searchText: normalizeSearchText(`${article.title} ${keywords.join(", ")} ${article.content}`) };
+      }),
+    ),
+  findArticle: () => Promise.resolve(null),
+});
+const knowledgeService = {
+  searchArticles(input: HelpCenterSearchInput) {
+    articleSearches.push(input);
+    return realKnowledge.searchArticles(input);
+  },
+};
+
 const config = loadAgentConfig(process.env);
 let metrics: TurnMetrics | undefined;
 const runner = createAgentRunner({
   model: config.model,
   timeoutMs: config.timeoutMs,
   ticketService,
+  knowledgeService,
   onTurnMetrics: (turn) => {
     metrics = turn;
   },
@@ -167,6 +197,153 @@ async function returnedCases(): Promise<void> {
       console.log("FALHA", message, "agent indisponível", JSON.stringify(metrics ?? null));
     }
   }
+}
+
+/** "TI": segue no suporte, sem encaminhar; "GENERIC": fora de escopo sem área conhecida. */
+type ScopeCase = { message: string; expect: RedirectArea | "TI" | "GENERIC" };
+
+const OUT_OF_SCOPE_CASES: readonly ScopeCase[] = [
+  { message: "Meu crachá não abre a porta do andar", expect: "FACILITIES" },
+  { message: "O ar-condicionado da sala 3 está pingando", expect: "FACILITIES" },
+  { message: "Como peço o reembolso do mouse que comprei?", expect: "FINANCEIRO" },
+  { message: "Como faço para marcar minhas férias?", expect: "RH" },
+  { message: "Meu holerite deste mês veio com desconto errado", expect: "RH" },
+  { message: "Estou sem acesso à pasta do Financeiro na rede", expect: "TI" },
+  { message: "Preciso de um notebook para um funcionário novo que começa segunda", expect: "TI" },
+  { message: "Qual a capital da França?", expect: "GENERIC" },
+];
+
+async function outOfScopeCases(): Promise<void> {
+  lookupResult = NO_MATCH;
+  for (const { message, expect } of OUT_OF_SCOPE_CASES) {
+    metrics = undefined;
+    try {
+      const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: false, actor: { id: OWNER, name: "Marina Costa" }, history: [], message });
+      const redirected = reply.trace.actions.some((action) => action.tool === "outOfScopeRedirect");
+      const verdict =
+        expect === "TI"
+          ? reply.trace.intent !== "OUT_OF_SCOPE" && !redirected
+          : expect === "GENERIC"
+            ? reply.content === OUT_OF_SCOPE_REPLY
+            : reply.content === redirectReply(expect) && redirected;
+      if (!verdict) process.exitCode = 1;
+      console.log(verdict ? "ok  " : "FALHA", `[${expect}]`, message, JSON.stringify({ intent: reply.trace.intent, content: reply.content, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
+    } catch (error) {
+      if (!(error instanceof AgentUnavailableError)) throw error;
+      process.exitCode = 1;
+      console.log("FALHA", message, "agent indisponível", JSON.stringify(metrics ?? null));
+    }
+  }
+}
+
+/** Prazo pausado: o agent diz que o analista aguarda e não cita data. */
+async function waitingCase(): Promise<void> {
+  const [listedTicket] = LISTED.tickets;
+  if (!listedTicket) throw new Error("LISTED precisa de um chamado");
+  lookupResult = {
+    outcome: "SINGLE_MATCH",
+    openTicketCount: 2,
+    totalMatches: 1,
+    tickets: [{ ...listedTicket, status: "WAITING_EMPLOYEE", statusLabel: "Aguardando funcionário", dueAt: null, overdue: false }],
+  };
+  metrics = undefined;
+  const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: false, actor: { id: OWNER, name: "Marina Costa" }, history: [], message: "Como está o INC-20311?" });
+  const verdict = /pausad/i.test(reply.content) && !/\d{1,2}\/\d{1,2}|venc/i.test(reply.content);
+  if (!verdict) process.exitCode = 1;
+  console.log(verdict ? "ok  " : "FALHA", "aguardando funcionário", JSON.stringify({ content: reply.content, codeNote: reply.content.includes(WAITING_EMPLOYEE_NOTE), metrics }));
+}
+
+const VPN_QUESTION = "Minha VPN dá erro 809 no Windows 10, o que eu faço?";
+
+type HelpCase = { name: string; message: string; history?: HistoryMessage[]; check: (reply: AgentTurnResult) => boolean };
+
+const citedSlug = (reply: AgentTurnResult) => reply.trace.sources?.[0]?.slug ?? null;
+const proposedTicket = (reply: AgentTurnResult) => reply.trace.actions.some((action) => action.tool === "draftTicket");
+const helpButtons = (reply: AgentTurnResult) => JSON.stringify(reply.quickReplies) === JSON.stringify(HELP_QUICK_REPLIES);
+
+const HELP_CASES: readonly HelpCase[] = [
+  { name: "cita vpn-erro-809", message: VPN_QUESTION, check: (reply) => citedSlug(reply) === "vpn-erro-809" && helpButtons(reply) },
+  {
+    name: "Windows 11 segue para abertura",
+    message: "Minha VPN dá erro 809 no Windows 11, o que eu faço?",
+    check: (reply) => citedSlug(reply) === null && proposedTicket(reply) && !/reinstal/i.test(reply.content),
+  },
+  { name: "cita horario-service-desk", message: "Qual o horário do suporte?", check: (reply) => citedSlug(reply) === "horario-service-desk" && /8h/.test(reply.content) },
+  {
+    name: "sem artigo: oferece chamado sem inventar",
+    message: "Como conecto um segundo monitor no meu computador?",
+    check: (reply) => citedSlug(reply) === null && /chamado/i.test(reply.content) && !/cabo|hdmi|displayport|conecte|configura[çc]/i.test(reply.content),
+  },
+];
+
+/** "Não resolveu" depois do artigo, e a pergunta de afetados: a proposta leva "Já tentou: <título>". */
+async function notResolvedCase(): Promise<void> {
+  const actor = { id: OWNER, name: "Marina Costa" };
+  const history: HistoryMessage[] = [
+    { authorType: "EMPLOYEE", content: VPN_QUESTION },
+    { authorType: "AGENT", content: `Reinstale o cliente de VPN pelo portal de softwares e reinicie o computador. ${articleNote("VPN com erro 809")}` },
+  ];
+  metrics = undefined;
+  const first = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: false, actor, history, message: "Não resolveu, abrir chamado" });
+  console.log(proposedTicket(first) ? "ok  " : "FALHA", "[help] não resolveu -> draftTicket", JSON.stringify({ content: first.content, actions: first.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
+  if (!proposedTicket(first)) process.exitCode = 1;
+  let draft = first.ticketDraft;
+  if (!draft) {
+    metrics = undefined;
+    const second = await runner.runTurn({
+      conversationId: "eval",
+      returnedFromAnalyst: false,
+      actor,
+      history: [...history, { authorType: "EMPLOYEE", content: "Não resolveu, abrir chamado" }, { authorType: "AGENT", content: first.content }],
+      message: "Só eu",
+    });
+    draft = second.ticketDraft;
+    console.log("     turno 2", JSON.stringify({ content: second.content, actions: second.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
+  }
+  const description = draft?.kind === "CREATE" ? draft.description : null;
+  const verdict = description?.includes("Já tentou: VPN com erro 809.") === true;
+  if (!verdict) process.exitCode = 1;
+  console.log(verdict ? "ok  " : "FALHA", "[help] descrição com o artigo tentado", JSON.stringify({ description }));
+}
+
+async function helpCases(): Promise<void> {
+  lookupResult = NO_MATCH;
+  for (const { name, message, history = [], check } of HELP_CASES) {
+    metrics = undefined;
+    articleSearches.length = 0;
+    try {
+      const reply = await runner.runTurn({ conversationId: "eval", returnedFromAnalyst: false, actor: { id: OWNER, name: "Marina Costa" }, history, message });
+      const verdict = check(reply);
+      if (!verdict) process.exitCode = 1;
+      console.log(verdict ? "ok  " : "FALHA", `[help] ${name}`, JSON.stringify({ content: reply.content, sources: reply.trace.sources ?? null, quickReplies: reply.quickReplies, searches: articleSearches, actions: reply.trace.actions.map((action) => `${action.tool}:${action.status}`), metrics }));
+    } catch (error) {
+      if (!(error instanceof AgentUnavailableError)) throw error;
+      process.exitCode = 1;
+      console.log("FALHA", `[help] ${name}`, "agent indisponível", JSON.stringify(metrics ?? null));
+    }
+  }
+  try {
+    await notResolvedCase();
+  } catch (error) {
+    if (!(error instanceof AgentUnavailableError)) throw error;
+    process.exitCode = 1;
+    console.log("FALHA", "[help] não resolveu", "agent indisponível", JSON.stringify(metrics ?? null));
+  }
+}
+
+if (process.argv.includes("help")) {
+  await helpCases();
+  process.exit();
+}
+
+if (process.argv.includes("out-of-scope")) {
+  await outOfScopeCases();
+  process.exit();
+}
+
+if (process.argv.includes("waiting")) {
+  await waitingCase();
+  process.exit();
 }
 
 if (process.argv.includes("returned")) {

@@ -1,11 +1,13 @@
-import { ArrowRightLeft, Headset, type LucideIcon } from "lucide-react";
+import { ArrowRightLeft, Bot, Headset, type LucideIcon } from "lucide-react";
 import { formatTime } from "@/shared/lib/format-date";
 import { cn } from "@/shared/lib/utils";
+import type { SystemEventIcon } from "../lib/system-event-icon";
 
-const ICONS = { transfer: ArrowRightLeft, takeover: Headset } satisfies Record<
-  string,
-  LucideIcon
->;
+const ICONS = {
+  transfer: ArrowRightLeft,
+  takeover: Headset,
+  return: Bot,
+} satisfies Record<SystemEventIcon, LucideIcon>;
 
 interface SystemEventProps {
   children: string;
@@ -13,7 +15,7 @@ interface SystemEventProps {
   variant?: "event" | "day";
   /** Horário do marco, em ISO; vira "· 14:20". */
   at?: string;
-  icon?: keyof typeof ICONS | null;
+  icon?: SystemEventIcon | null;
   className?: string;
 }
 

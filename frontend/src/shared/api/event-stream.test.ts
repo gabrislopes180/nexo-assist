@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   openEventStream,
   type EventSourceLike,
+  type OpenEventStreamOptions,
   type StreamStatus,
 } from "./event-stream";
 
@@ -41,7 +42,10 @@ class FakeSource implements EventSourceLike {
   }
 }
 
-function setup(events: Record<string, (data: unknown) => void> = {}) {
+function setup(
+  events: Record<string, (data: unknown) => void> = {},
+  extra: Partial<OpenEventStreamOptions> = {},
+) {
   const sources: FakeSource[] = [];
   const statuses: StreamStatus[] = [];
   const onClosedByServer = vi.fn();
@@ -63,6 +67,7 @@ function setup(events: Record<string, (data: unknown) => void> = {}) {
         goOnline = () => undefined;
       };
     },
+    ...extra,
   });
   const last = () => {
     const source = sources.at(-1);
@@ -240,5 +245,22 @@ describe("openEventStream", () => {
 
     stream.reconnectNow();
     expect(sources).toHaveLength(1);
+  });
+
+  it("abre com o lastEventId de um stream anterior, para o servidor tentar o REPLAY", () => {
+    const { last } = setup({}, { lastEventId: "57" });
+
+    expect(last().url).toBe("/api/console/events?lastEventId=57");
+  });
+
+  it("avisa cada lastEventId novo, para quem reabrir depois continuar dali", () => {
+    const onLastEventId = vi.fn();
+    const { last } = setup({ "message.created": vi.fn() }, { onLastEventId });
+
+    last().emit("sync", { mode: "RESYNC" }, "10");
+    last().emit("message.created", {}, "");
+    last().emit("message.created", {}, "11");
+
+    expect(onLastEventId.mock.calls).toEqual([["10"], ["11"]]);
   });
 });

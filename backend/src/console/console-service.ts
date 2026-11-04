@@ -86,7 +86,7 @@ export function createConsoleService({ conversations, queries, tickets, now = ()
     async getTickets(actor, conversationId) {
       assertAnalyst(actor);
       const row = await queries.find(conversationId);
-      const owned = await tickets.listOwnerTickets(row.owner.id);
+      const owned = await tickets.listOwnerTickets(row.owner.id, now());
       return {
         conversationTicket: owned.find((ticket) => ticket.code === row.ticketCode) ?? null,
         otherTickets: owned.filter((ticket) => ticket.code !== row.ticketCode),

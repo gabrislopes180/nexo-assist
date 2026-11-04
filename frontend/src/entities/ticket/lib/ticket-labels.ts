@@ -5,6 +5,12 @@ import type {
   TicketStatus,
 } from "../model/ticket";
 import type { ConsoleTicketStatus } from "../model/console-ticket";
+import type { AffectedScope } from "../model/ticket-draft";
+
+export const TYPE_LABELS: Record<"INC" | "REQ", string> = {
+  INC: "Incidente",
+  REQ: "Requisição",
+};
 
 export const CATEGORY_LABELS: Record<TicketCategory, string> = {
   ACCESS: "Acesso",
@@ -40,4 +46,20 @@ export const STATUS_TONES: Record<TicketStatus, StatusTone> = {
 export const CONSOLE_STATUS_TONES: Record<ConsoleTicketStatus, StatusTone> = {
   ...STATUS_TONES,
   RESOLVED: "neutral",
+};
+
+/** Igual a TICKET_STATUS_LABEL do backend (tickets/ticket-rules.ts). */
+export const CONSOLE_STATUS_LABELS: Record<ConsoleTicketStatus, string> = {
+  WAITING_ANALYST: "Aguardando analista",
+  IN_PROGRESS: "Em andamento",
+  WAITING_EMPLOYEE: "Aguardando funcionário",
+  APPROVED: "Aprovado",
+  RESOLVED: "Resolvido",
+};
+
+/** Para o analista, em terceira pessoa (o rascunho do funcionário diz "Somente você"). */
+export const AFFECTED_SCOPE_CONSOLE_LABELS: Record<AffectedScope, string> = {
+  INDIVIDUAL: "Individual",
+  TEAM: "Equipe",
+  COMPANY: "Toda a empresa",
 };

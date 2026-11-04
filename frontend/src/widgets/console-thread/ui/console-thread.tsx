@@ -69,7 +69,6 @@ export function ConsoleThread({
   const timeline =
     conversation && messages.data
       ? buildConsoleTimeline(messages.data, {
-          handoffAt: conversation.handoffAt,
           ownerName: conversation.owner.name,
           now,
         })

@@ -1,0 +1,2 @@
+- [Structured output strips fields](mastra-structured-output-strips.md) — new decision field must be in llmDecisionSchema + lenient schema + runner test
+- [Out-of-scope redirect decisions](out-of-scope-redirect-decisions.md) — Plano 3 design, eval results, WAITING_EMPLOYEE note tweak

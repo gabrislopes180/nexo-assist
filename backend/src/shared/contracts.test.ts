@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { pendingDraftSchema } from "./conversation-draft.js";
 import { loginRequestSchema } from "./session.js";
+import { helpCenterSearchInputSchema, helpCenterSearchResultSchema } from "./knowledge.js";
 import { agentTraceSchema } from "./transparency.js";
 
 const validTrace = {
@@ -30,6 +31,56 @@ describe("agentTraceSchema", () => {
     assert.equal(agentTraceSchema.safeParse(badAction).success, false);
     const { reason: _reason, ...withoutReason } = validTrace;
     assert.equal(agentTraceSchema.safeParse(withoutReason).success, false);
+  });
+});
+
+describe("agentTraceSchema.sources", () => {
+  const source = { kind: "ARTICLE", slug: "vpn-erro-809", title: "VPN com erro 809" };
+
+  it("trace antigo, sem sources, continua válido", () => {
+    assert.equal(agentTraceSchema.safeParse(validTrace).success, true);
+  });
+
+  it("aceita até 3 artigos citados", () => {
+    const parsed = agentTraceSchema.parse({ ...validTrace, sources: [source, source, source] });
+    assert.deepEqual(parsed.sources?.[0], source);
+    assert.equal(agentTraceSchema.safeParse({ ...validTrace, sources: [] }).success, true);
+  });
+
+  it("rejeita mais de 3, tipo desconhecido e campo a mais", () => {
+    assert.equal(agentTraceSchema.safeParse({ ...validTrace, sources: [source, source, source, source] }).success, false);
+    assert.equal(agentTraceSchema.safeParse({ ...validTrace, sources: [{ ...source, kind: "URL" }] }).success, false);
+    assert.equal(agentTraceSchema.safeParse({ ...validTrace, sources: [{ ...source, content: "x" }] }).success, false);
+  });
+});
+
+describe("helpCenterSearchInputSchema", () => {
+  it("apara as keywords e aceita categoria opcional", () => {
+    assert.deepEqual(helpCenterSearchInputSchema.parse({ keywords: [" vpn "], category: "NETWORK_VPN" }), { keywords: ["vpn"], category: "NETWORK_VPN" });
+  });
+
+  it("rejeita lista vazia, mais de 6, keyword curta ou longa, categoria desconhecida e campo a mais", () => {
+    for (const input of [
+      { keywords: [] },
+      { keywords: ["aa", "bb", "cc", "dd", "ee", "ff", "gg"] },
+      { keywords: [" a "] },
+      { keywords: ["a".repeat(41)] },
+      { keywords: ["vpn"], category: "RH" },
+      { keywords: ["vpn"], limit: 10 },
+    ]) {
+      assert.equal(helpCenterSearchInputSchema.safeParse(input).success, false, JSON.stringify(input));
+    }
+  });
+});
+
+describe("helpCenterSearchResultSchema", () => {
+  const article = { slug: "vpn-erro-809", title: "VPN com erro 809", category: "NETWORK_VPN", content: "Reinstale." };
+
+  it("FOUND exige de 1 a 3 artigos; NO_MATCH e UNAVAILABLE, nenhum", () => {
+    assert.equal(helpCenterSearchResultSchema.safeParse({ outcome: "FOUND", articles: [article] }).success, true);
+    assert.equal(helpCenterSearchResultSchema.safeParse({ outcome: "FOUND", articles: [] }).success, false);
+    assert.equal(helpCenterSearchResultSchema.safeParse({ outcome: "NO_MATCH", articles: [] }).success, true);
+    assert.equal(helpCenterSearchResultSchema.safeParse({ outcome: "UNAVAILABLE", articles: [article] }).success, false);
   });
 });
 

@@ -44,6 +44,7 @@ const timeline = (
   content,
   createdAt: at(minute),
   trace: null,
+  systemKind: null,
   ...extra,
 });
 
@@ -129,11 +130,17 @@ describe("chatReducer: tempo real", () => {
   });
 
   it.each([
-    ["Transferida para um analista", "transfer"],
-    ["Rafael assumiu a conversa", "takeover"],
-    ["Conversa devolvida ao agent", null],
-  ] as const)("SYSTEM %s vira marco com ícone %s", (content, icon) => {
-    const state = run(active(), stream(timeline("s1", "SYSTEM", 5, content)));
+    ["Transferida para um analista", "HANDOFF", "transfer"],
+    ["Rafael assumiu a conversa", "TAKEOVER", "takeover"],
+    ["Conversa devolvida ao agent", "RETURNED", "return"],
+    ["Rafael encerrou o atendimento", "CLOSED", null],
+    // O texto não decide nada: sem systemKind, fica sem ícone.
+    ["Transferida para um analista", null, null],
+  ] as const)("SYSTEM %s (%s) vira marco com ícone %s", (content, systemKind, icon) => {
+    const state = run(
+      active(),
+      stream(timeline("s1", "SYSTEM", 5, content, { systemKind })),
+    );
 
     expect(state.items.at(-1)).toEqual({
       kind: "event",
@@ -196,7 +203,7 @@ describe("chatReducer: tempo real", () => {
       pending,
       stream(timeline("e1", "EMPLOYEE", 1, "Quero falar com um analista")),
       stream(timeline("m1", "AGENT", 2, "Resposta")),
-      stream(timeline("s1", "SYSTEM", 2, "Transferida para um analista")),
+      stream(timeline("s1", "SYSTEM", 2, "Transferida para um analista", { systemKind: "HANDOFF" })),
       updated({ status: "WAITING_ANALYST" }),
     );
     expect(queued.items).toHaveLength(1);
@@ -239,7 +246,7 @@ describe("chatReducer: tempo real", () => {
     const state = run(
       started,
       stream(timeline("m2", "AGENT", 3, "Abri o chamado.")),
-      stream(timeline("s1", "SYSTEM", 3, "Transferida para um analista")),
+      stream(timeline("s1", "SYSTEM", 3, "Transferida para um analista", { systemKind: "HANDOFF" })),
       {
         type: "draftConfirmed",
         result: {
@@ -418,8 +425,8 @@ describe("chatReducer: resynced", () => {
       messages: [
         timeline("e1", "EMPLOYEE", 1, "Oi"),
         timeline("m1", "AGENT", 2, "Resposta"),
-        timeline("s1", "SYSTEM", 2, "Transferida para um analista"),
-        timeline("s2", "SYSTEM", 3, "Rafael assumiu a conversa"),
+        timeline("s1", "SYSTEM", 2, "Transferida para um analista", { systemKind: "HANDOFF" }),
+        timeline("s2", "SYSTEM", 3, "Rafael assumiu a conversa", { systemKind: "TAKEOVER" }),
         timeline("x1", "ANALYST", 4, "Oi, Ana"),
       ],
     });
@@ -440,7 +447,7 @@ describe("chatReducer: resynced", () => {
     const state = run(withAnalyst, {
       type: "resynced",
       conversation: conversation({ status: "WITH_ANALYST", analyst: rafael }),
-      messages: [timeline("s1", "SYSTEM", 5, "Rafael assumiu a conversa")],
+      messages: [timeline("s1", "SYSTEM", 5, "Rafael assumiu a conversa", { systemKind: "TAKEOVER" })],
     });
 
     expect(ids(state)).toEqual(["e1", "m1", "s1", "x2"]);

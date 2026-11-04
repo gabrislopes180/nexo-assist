@@ -11,10 +11,18 @@ import {
   ConversationNotWithAgentError,
 } from "../conversations/conversation-service.js";
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
+import { ArticleNotFoundError, KnowledgeUnavailableError } from "../knowledge/knowledge-service.js";
 import { TooManyStreamsError } from "../realtime/sse.js";
 import { DraftKindMismatchError, DraftNotFoundError, TicketNotOpenError, TicketNotReopenableError } from "../conversations/ticket-draft.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import { TicketServiceUnavailableError } from "../tickets/ticket-service.js";
+import {
+  InvalidTicketConversationError,
+  TicketNotFoundError,
+  TicketStatusConflictError,
+  TicketStatusNoteRequiredError,
+  TicketTransitionNotAllowedError,
+} from "../tickets/ticket-status-service.js";
 
 export class ApiError extends Error {
   constructor(
@@ -71,11 +79,33 @@ const DOMAIN_ERRORS = [
     message: "Este chamado não pode mais ser reaberto. Se o problema voltou, abra um chamado novo.",
   },
   { type: TicketNotOpenError, status: 409, code: "TICKET_NOT_OPEN", message: "Este chamado não está mais aberto." },
+  { type: TicketNotFoundError, status: 404, code: "TICKET_NOT_FOUND", message: "Chamado não encontrado." },
+  {
+    type: TicketStatusConflictError,
+    status: 409,
+    code: "TICKET_STATUS_CONFLICT",
+    message: "O status deste chamado mudou. Atualize e tente de novo.",
+  },
+  {
+    type: TicketTransitionNotAllowedError,
+    status: 409,
+    code: "TICKET_TRANSITION_NOT_ALLOWED",
+    message: "Essa mudança de status não é permitida para este chamado.",
+  },
+  { type: TicketStatusNoteRequiredError, status: 400, code: "INVALID_REQUEST", message: "Requisição inválida." },
+  { type: InvalidTicketConversationError, status: 400, code: "INVALID_REQUEST", message: "Requisição inválida." },
   {
     type: TicketServiceUnavailableError,
     status: 503,
     code: "TICKET_SERVICE_UNAVAILABLE",
     message: "O serviço de chamados está indisponível no momento. Tente novamente em instantes.",
+  },
+  { type: ArticleNotFoundError, status: 404, code: "ARTICLE_NOT_FOUND", message: "Artigo não encontrado." },
+  {
+    type: KnowledgeUnavailableError,
+    status: 503,
+    code: "HELP_CENTER_UNAVAILABLE",
+    message: "A central de ajuda está indisponível no momento. Tente novamente em instantes.",
   },
   { type: TooManyStreamsError, status: 429, code: "TOO_MANY_STREAMS", message: "Muitas conexões abertas. Feche outras abas e tente de novo." },
   {

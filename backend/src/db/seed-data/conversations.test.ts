@@ -4,7 +4,7 @@ import { CONVERSATION_MESSAGE_LIMIT } from "../../conversations/conversation-rul
 import { closeSystemMessage, RETURN_SYSTEM_MESSAGE, takeoverSystemMessage } from "../../conversations/attendance.js";
 import { HANDOFF_SYSTEM_MESSAGE } from "../../conversations/handoff.js";
 import { agentTraceSchema } from "../../shared/transparency.js";
-import { buildConversations, NEAR_LIMIT_CONVERSATION_ID } from "./conversations.js";
+import { agentQuotaUsed, buildConversations, NEAR_LIMIT_CONVERSATION_ID } from "./conversations.js";
 
 const NOW = new Date("2026-11-01T12:00:00.000Z");
 const conversations = buildConversations(NOW, () => NOW);
@@ -59,6 +59,38 @@ describe("conversas do seed", () => {
         if (previous) assert.ok(previous.at < message.at, `${conversation.key} #${index}`);
       });
     }
+  });
+
+  it("toda SYSTEM tem o systemKind do seu texto, e só SYSTEM tem systemKind", () => {
+    const kindOf = (content: string) =>
+      content === HANDOFF_SYSTEM_MESSAGE
+        ? "HANDOFF"
+        : content === RETURN_SYSTEM_MESSAGE
+          ? "RETURNED"
+          : content.endsWith(" assumiu a conversa")
+            ? "TAKEOVER"
+            : content.endsWith(" encerrou o atendimento")
+              ? "CLOSED"
+              : "desconhecido";
+    for (const conversation of conversations) {
+      for (const m of conversation.messages) {
+        assert.equal(m.systemKind, m.authorType === "SYSTEM" ? kindOf(m.content) : undefined, `${conversation.key}: ${m.content}`);
+      }
+    }
+  });
+
+  it("a cota conta só as mensagens do funcionário enviadas com a conversa no agent", () => {
+    assert.equal(agentQuotaUsed(byId("seed-conv-returned").messages), 1);
+    assert.equal(agentQuotaUsed(byId("seed-conv-closed-by-analyst").messages), 1);
+    assert.equal(agentQuotaUsed(byId(NEAR_LIMIT_CONVERSATION_ID).messages), CONVERSATION_MESSAGE_LIMIT - 1);
+    const withReturn = [
+      { authorType: "EMPLOYEE", systemKind: null },
+      { authorType: "SYSTEM", systemKind: "HANDOFF" },
+      { authorType: "EMPLOYEE", systemKind: null },
+      { authorType: "SYSTEM", systemKind: "RETURNED" },
+      { authorType: "EMPLOYEE", systemKind: null },
+    ] as const;
+    assert.equal(agentQuotaUsed(withReturn), 2);
   });
 
   describe("atendimento por analista", () => {

@@ -59,4 +59,82 @@ describe("upsertConsoleConversation", () => {
     await vi.waitFor(() => expect(queryFn).toHaveBeenCalledTimes(2));
     unsubscribe();
   });
+
+  it("primeira busca em andamento, sem cache: ainda marca como inválida", () => {
+    const qc = client();
+    const queryFn = vi.fn(() => new Promise<ConsoleConversation[]>(() => undefined));
+    const observer = new QueryObserver(qc, { queryKey: list, queryFn });
+    const unsubscribe = observer.subscribe(() => undefined);
+
+    upsertConsoleConversation(qc, build());
+
+    // Sem dado, o TanStack junta a nova busca com a em voo; quem cobre esse
+    // caso é o RESYNC do primeiro sync (apply-console-event).
+    expect(qc.getQueryState(list)?.isInvalidated).toBe(true);
+    unsubscribe();
+  });
+
+  describe("com uma versão mais nova em cache (lastMessageAt)", () => {
+    const newer = () =>
+      build({
+        status: "CLOSED",
+        lastMessageAt: "2026-10-20T13:20:00.000Z",
+      });
+    const older = () =>
+      build({
+        status: "WITH_ANALYST",
+        assignedToMe: true,
+        lastMessageAt: "2026-10-20T13:12:00.000Z",
+      });
+
+    it("não troca a conversa da lista nem do detalhe por uma mais velha", () => {
+      const qc = client();
+      const cached = newer();
+      qc.setQueryData(list, [cached]);
+      qc.setQueryData(detail(cached.id), cached);
+
+      upsertConsoleConversation(qc, older());
+
+      expect(qc.getQueryData(list)).toEqual([cached]);
+      expect(qc.getQueryData(detail(cached.id))).toEqual(cached);
+    });
+
+    it("compara a lista e o detalhe cada um com o seu valor", () => {
+      const qc = client();
+      qc.setQueryData(list, [newer()]);
+      qc.setQueryData(detail("c-ana"), build({ lastMessageAt: "2026-10-20T13:00:00.000Z" }));
+      const incoming = older();
+
+      upsertConsoleConversation(qc, incoming);
+
+      expect(qc.getQueryData(list)).toEqual([newer()]);
+      expect(qc.getQueryData(detail("c-ana"))).toEqual(incoming);
+    });
+
+    it("no mesmo instante, a que chega vence", () => {
+      const qc = client();
+      qc.setQueryData(list, [older()]);
+      const incoming = build({
+        ...older(),
+        ticketCode: "INC-20311",
+      });
+
+      upsertConsoleConversation(qc, incoming);
+
+      expect(qc.getQueryData(list)).toEqual([incoming]);
+    });
+
+    it("descartada, não rebusca a lista em andamento", () => {
+      const qc = client();
+      const queryFn = vi.fn(() => new Promise<ConsoleConversation[]>(() => undefined));
+      qc.setQueryData(list, [newer()]);
+      const observer = new QueryObserver(qc, { queryKey: list, queryFn });
+      const unsubscribe = observer.subscribe(() => undefined);
+
+      upsertConsoleConversation(qc, older());
+
+      expect(qc.getQueryState(list)?.isInvalidated).toBe(false);
+      unsubscribe();
+    });
+  });
 });

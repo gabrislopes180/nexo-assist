@@ -3,18 +3,8 @@ import { assertAnalyst } from "../console/console-service.js";
 import { analystReplySchema, consoleListQuerySchema, emptyBodySchema } from "../shared/console.js";
 import type { EventStreams } from "../realtime/sse.js";
 import type { AppDeps } from "./deps.js";
-import { ApiError } from "./errors.js";
+import { idParamOf, invalidRequest } from "./request.js";
 import { requireSession, sessionExpiresAtOf, sessionUserOf } from "./session.js";
-
-/** Id ausente ou repetido nunca casa com uma conversa: cai no mesmo 404. */
-function conversationIdOf(req: Request): string {
-  const { id } = req.params;
-  return typeof id === "string" ? id : "";
-}
-
-function invalidRequest(): ApiError {
-  return new ApiError(400, "INVALID_REQUEST", "Requisição inválida.");
-}
 
 function assertEmptyBody(req: Request): void {
   if (!emptyBodySchema.safeParse(req.body).success) throw invalidRequest();
@@ -50,36 +40,36 @@ export function createConsoleRouter(deps: AppDeps, streams: EventStreams): Route
   });
 
   router.get("/conversations/:id", async (req, res) => {
-    res.json({ conversation: await service.getConversation(sessionUserOf(res), conversationIdOf(req)) });
+    res.json({ conversation: await service.getConversation(sessionUserOf(res), idParamOf(req)) });
   });
 
   router.get("/conversations/:id/messages", async (req, res) => {
-    res.json({ messages: await service.getMessages(sessionUserOf(res), conversationIdOf(req)) });
+    res.json({ messages: await service.getMessages(sessionUserOf(res), idParamOf(req)) });
   });
 
   router.get("/conversations/:id/tickets", async (req, res) => {
-    res.json(await service.getTickets(sessionUserOf(res), conversationIdOf(req)));
+    res.json(await service.getTickets(sessionUserOf(res), idParamOf(req)));
   });
 
   router.post("/conversations/:id/takeover", async (req, res) => {
     assertEmptyBody(req);
-    res.json({ conversation: await service.takeOver(sessionUserOf(res), conversationIdOf(req)) });
+    res.json({ conversation: await service.takeOver(sessionUserOf(res), idParamOf(req)) });
   });
 
   router.post("/conversations/:id/messages", async (req, res) => {
     const parsed = analystReplySchema.safeParse(req.body);
     if (!parsed.success) throw invalidRequest();
-    res.json(await service.reply(sessionUserOf(res), conversationIdOf(req), parsed.data.content));
+    res.json(await service.reply(sessionUserOf(res), idParamOf(req), parsed.data.content));
   });
 
   router.post("/conversations/:id/return", async (req, res) => {
     assertEmptyBody(req);
-    res.json({ conversation: await service.returnToAgent(sessionUserOf(res), conversationIdOf(req)) });
+    res.json({ conversation: await service.returnToAgent(sessionUserOf(res), idParamOf(req)) });
   });
 
   router.post("/conversations/:id/close", async (req, res) => {
     assertEmptyBody(req);
-    res.json({ conversation: await service.close(sessionUserOf(res), conversationIdOf(req)) });
+    res.json({ conversation: await service.close(sessionUserOf(res), idParamOf(req)) });
   });
 
   return router;

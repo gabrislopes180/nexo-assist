@@ -9,7 +9,7 @@ import type {
 } from "../../generated/prisma/enums.js";
 import type { ConversationKey } from "./conversations.js";
 import { ago } from "./time.js";
-import type { UserKey } from "./users.js";
+import type { UserKey, UserSeed } from "./users.js";
 
 export type TicketEventSeed = {
   at: Date;
@@ -103,12 +103,12 @@ export function buildTickets(now: Date): TicketSeed[] {
       affectedScope: "INDIVIDUAL",
       events: [
         { at: t({ days: 6 }), type: "CREATED", actorType: "EMPLOYEE", actorKey: "marina" },
-        { at: t({ days: 5 }), type: "STATUS_CHANGED", actorType: "ANALYST", actorKey: "ana", toStatus: "IN_PROGRESS" },
+        { at: t({ days: 5 }), type: "STATUS_CHANGED", actorType: "ANALYST", actorKey: "rafael", toStatus: "IN_PROGRESS" },
         {
           at: t({ days: 4 }),
           type: "STATUS_CHANGED",
           actorType: "ANALYST",
-          actorKey: "ana",
+          actorKey: "rafael",
           toStatus: "RESOLVED",
           content: "Conta desbloqueada e senha redefinida.",
         },
@@ -125,12 +125,12 @@ export function buildTickets(now: Date): TicketSeed[] {
       affectedScope: "INDIVIDUAL",
       events: [
         { at: t({ days: 15 }), type: "CREATED", actorType: "EMPLOYEE", actorKey: "marina" },
-        { at: t({ days: 14, hours: 23 }), type: "STATUS_CHANGED", actorType: "ANALYST", actorKey: "ana", toStatus: "IN_PROGRESS" },
+        { at: t({ days: 14, hours: 23 }), type: "STATUS_CHANGED", actorType: "ANALYST", actorKey: "rafael", toStatus: "IN_PROGRESS" },
         {
           at: t({ days: 12 }),
           type: "STATUS_CHANGED",
           actorType: "ANALYST",
-          actorKey: "ana",
+          actorKey: "rafael",
           toStatus: "RESOLVED",
           content: "Driver da placa de rede atualizado.",
         },
@@ -164,7 +164,7 @@ export function buildTickets(now: Date): TicketSeed[] {
           at: t({ days: 2 }),
           type: "STATUS_CHANGED",
           actorType: "ANALYST",
-          actorKey: "ana",
+          actorKey: "bruno",
           toStatus: "WAITING_EMPLOYEE",
           content: "Pode informar o andar e o modelo da impressora?",
         },
@@ -189,7 +189,6 @@ export function buildTickets(now: Date): TicketSeed[] {
           content: C3_HANDOFF_SUMMARY,
           conversationKey: "C3",
         },
-        { at: t({ minutes: 35 }), type: "STATUS_CHANGED", actorType: "ANALYST", actorKey: "bruno", toStatus: "IN_PROGRESS" },
       ],
     },
     {
@@ -226,4 +225,22 @@ export function buildTickets(now: Date): TicketSeed[] {
       events: [{ at: t({ days: 1 }), type: "CREATED", actorType: "EMPLOYEE", actorKey: "juliana" }],
     },
   ];
+}
+
+/**
+ * Problemas de autoria nos eventos: ANALYST precisa de um usuário com papel ANALYST, EMPLOYEE
+ * precisa ser o dono do chamado, AGENT e SYSTEM não têm ator. Lista vazia = tudo certo.
+ */
+export function ticketActorProblems(tickets: readonly TicketSeed[], users: readonly Pick<UserSeed, "key" | "role">[]): string[] {
+  const roleOf = new Map(users.map((user) => [user.key, user.role] as const));
+  const problems: string[] = [];
+  for (const ticket of tickets) {
+    for (const event of ticket.events) {
+      const where = `${ticket.code} ${event.type} (${event.actorType}, ${event.actorKey ?? "sem ator"})`;
+      if (event.actorType === "ANALYST" && (event.actorKey === null || roleOf.get(event.actorKey) !== "ANALYST")) problems.push(`${where}: ator não é analista`);
+      if (event.actorType === "EMPLOYEE" && event.actorKey !== ticket.ownerKey) problems.push(`${where}: funcionário não é o dono`);
+      if ((event.actorType === "AGENT" || event.actorType === "SYSTEM") && event.actorKey !== null) problems.push(`${where}: AGENT e SYSTEM não têm ator`);
+    }
+  }
+  return problems;
 }

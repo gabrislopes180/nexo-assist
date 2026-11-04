@@ -2,7 +2,7 @@ import { Router } from "express";
 import { issueSessionToken } from "../auth/session-token.js";
 import { loginRequestSchema } from "../shared/session.js";
 import type { AppDeps } from "./deps.js";
-import { ApiError } from "./errors.js";
+import { invalidRequest } from "./request.js";
 import { clearSessionCookie, requireSession, sessionUserOf, setSessionCookie } from "./session.js";
 
 export function createAuthRouter(deps: AppDeps): Router {
@@ -15,7 +15,7 @@ export function createAuthRouter(deps: AppDeps): Router {
 
   router.post("/login", async (req, res) => {
     const parsed = loginRequestSchema.safeParse(req.body);
-    if (!parsed.success) throw new ApiError(400, "INVALID_REQUEST", "Requisição inválida.");
+    if (!parsed.success) throw invalidRequest();
 
     const user = await deps.authService.login(parsed.data.email);
     const token = await issueSessionToken({ userId: user.id, secret: deps.config.sessionSecret, now: new Date() });

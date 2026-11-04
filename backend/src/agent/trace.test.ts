@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 import type { TicketLookupResult, TicketSummary } from "../shared/chat.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import type { DraftExecution } from "./tools/turn-recorder.js";
+import { articleNote, citedArticleIn, HELP_QUICK_REPLIES, llmDecisionSchema, triedArticleFrom } from "./trace.js";
 import { knownCodesFrom, overdueOfferCodeFrom, overdueOfferText, relatedCodeFrom, windowExpiredText } from "./trace.js";
-import { actionsFrom, CONFIRMATION_REPLY, citesOnlyKnownTickets, claimsFalseAction, isBareConfirmation, composeReply, parseDecision, templateFor, type LlmDecision, type ReplyInput } from "./trace.js";
+import { actionsFrom, CONFIRMATION_REPLY, citesOnlyKnownTickets, claimsFalseAction, isBareConfirmation, composeReply, OUT_OF_SCOPE_REPLY, parseDecision, templateFor, WAITING_EMPLOYEE_NOTE, type LlmDecision, type ReplyInput } from "./trace.js";
+import { redirectReply } from "../knowledge/redirect-targets.js";
 
 const ticket = (code: string, overrides: Partial<TicketSummary> = {}): TicketSummary => ({
   code,
@@ -479,7 +481,7 @@ describe("composeReply", () => {
     it("fora de escopo descarta a proposta e não diz que preparou nada", () => {
       const reply = compose({ decision: { ...decision, content: "Só ajudo com suporte.", intent: "OUT_OF_SCOPE" }, drafts: [drafted] });
       assert.equal(reply?.ticketDraft, null);
-      assert.equal(reply?.content, "Só ajudo com suporte.");
+      assert.equal(reply?.content, OUT_OF_SCOPE_REPLY);
       assert.equal(reply?.trace.intent, "OUT_OF_SCOPE");
     });
 
@@ -501,14 +503,14 @@ describe("composeReply", () => {
     it("devolve ticketLookup null e mantém a ação no trace", () => {
       const reply = compose({ decision: outOfScope, executions: [multiple] });
       assert.equal(reply?.ticketLookup, null);
-      assert.equal(reply?.content, outOfScope.content);
+      assert.equal(reply?.content, OUT_OF_SCOPE_REPLY);
       assert.equal(reply?.trace.intent, "OUT_OF_SCOPE");
       assert.deepEqual(reply?.trace.actions, actionsFrom([multiple]));
     });
 
     it("não troca a resposta pelo template da consulta", () => {
       for (const execution of [noMatch, noOpen, unavailable]) {
-        assert.equal(compose({ decision: outOfScope, executions: [execution] })?.content, outOfScope.content);
+        assert.equal(compose({ decision: outOfScope, executions: [execution] })?.content, OUT_OF_SCOPE_REPLY);
       }
     });
 
@@ -518,6 +520,123 @@ describe("composeReply", () => {
       assert.equal(citesOnlyKnownTickets(reply?.content ?? "", null), true);
       assert.match(reply?.content ?? "", /suporte/);
       assert.equal(reply?.trace.confidence, "LOW");
+    });
+  });
+
+  describe("redirecionamento fora de escopo", () => {
+    const outOfScope: LlmDecision = { ...decision, content: "Fale com o RH.", intent: "OUT_OF_SCOPE", redirectTo: "RH" };
+
+    it("área válida: texto exato do código e ação no trace", () => {
+      const reply = compose({ decision: outOfScope });
+      assert.equal(reply?.content, redirectReply("RH"));
+      assert.equal(reply?.trace.intent, "OUT_OF_SCOPE");
+      assert.deepEqual(reply?.trace.actions, [{ tool: "outOfScopeRedirect", summary: "Encaminhado para o RH.", status: "SUCCESS" }]);
+      assert.equal(agentTraceSchema.safeParse(reply?.trace).success, true);
+    });
+
+    it("contato escrito pelo modelo é ignorado", () => {
+      const reply = compose({ decision: { ...outOfScope, content: "Mande para reembolso@empresa.com ou ligue 4002.", redirectTo: "FINANCEIRO" } });
+      assert.equal(reply?.content, redirectReply("FINANCEIRO"));
+      assert.ok(!reply?.content.includes("empresa.com"));
+    });
+
+    it("sem área conhecida: resposta genérica, sem ação de encaminhamento", () => {
+      for (const redirectTo of [null, undefined]) {
+        const reply = compose({ decision: { ...outOfScope, content: "Paris.", redirectTo } });
+        assert.equal(reply?.content, OUT_OF_SCOPE_REPLY);
+        assert.deepEqual(reply?.trace.actions, []);
+      }
+    });
+
+    it("área inválida vinda do modelo cai no genérico", () => {
+      const parsed = parseDecision({ ...outOfScope, redirectTo: "JURIDICO" }, "");
+      assert.equal(parsed?.redirectTo, undefined);
+      assert.equal(compose({ decision: parsed })?.content, OUT_OF_SCOPE_REPLY);
+    });
+
+    it("redirectTo fora de OUT_OF_SCOPE é ignorado", () => {
+      const reply = compose({ decision: { ...decision, content: "Vou preparar o chamado de acesso.", intent: "OPEN_TICKET", redirectTo: "FINANCEIRO" } });
+      assert.equal(reply?.content, "Vou preparar o chamado de acesso.");
+      assert.ok(!reply?.trace.actions.some((action) => action.tool === "outOfScopeRedirect"));
+    });
+
+    it("continua anulando consulta, rascunho e transferência", () => {
+      const proposal = { kind: "COMPLEMENT" as const, ticket: ticket("INC-20311"), content: "x" };
+      const reply = compose({
+        decision: { ...outOfScope, redirectTo: "FACILITIES" },
+        executions: [single],
+        drafts: [{ outcome: "DRAFTED", proposal }],
+        handoffs: [{ outcome: "ACCEPTED", proposal: { reason: "EMPLOYEE_REQUEST", summary: "x" } }],
+      });
+      assert.equal(reply?.content, redirectReply("FACILITIES"));
+      assert.equal(reply?.ticketLookup, null);
+      assert.equal(reply?.ticketDraft, null);
+      assert.equal(reply?.handoff ?? null, null);
+      assert.equal(reply?.trace.actions.at(-1)?.tool, "outOfScopeRedirect");
+      assert.equal(reply?.trace.actions.find((action) => action.tool === "transferToAnalyst")?.status, "SKIPPED");
+    });
+
+    it("texto barrado do modelo mantém o encaminhamento, mas não o entendimento dele", () => {
+      const reply = compose({ decision: { ...outOfScope, content: "Encaminhei ao RH o INC-999." } });
+      assert.equal(reply?.content, redirectReply("RH"));
+      assert.equal(reply?.trace.actions.at(-1)?.tool, "outOfScopeRedirect");
+      assert.equal(reply?.trace.understood, "Mensagem não classificada pelo modelo.");
+      assert.equal(reply?.trace.confidence, "LOW");
+    });
+
+    it("confirmação por texto vale mais que o encaminhamento", () => {
+      assert.equal(compose({ message: "confirmo", decision: outOfScope })?.content, CONFIRMATION_REPLY);
+    });
+  });
+
+  describe("chamado aguardando o funcionário", () => {
+    const waiting: TicketLookupResult = {
+      outcome: "SINGLE_MATCH",
+      openTicketCount: 1,
+      totalMatches: 1,
+      tickets: [ticket("INC-30", { status: "WAITING_EMPLOYEE", statusLabel: "Aguardando funcionário", dueAt: null, overdue: false })],
+    };
+
+    it("template diz que o analista aguarda e o prazo está pausado", () => {
+      assert.equal(templateFor(waiting), `Encontrei o chamado INC-30 (Notebook lento): status Aguardando funcionário. ${WAITING_EMPLOYEE_NOTE}`);
+    });
+
+    it("o aviso é acrescentado quando o modelo não falou da pausa", () => {
+      const reply = compose({ decision: { ...decision, content: "O INC-30 está com o status Aguardando funcionário." }, executions: [waiting] });
+      assert.equal(reply?.content, `O INC-30 está com o status Aguardando funcionário. ${WAITING_EMPLOYEE_NOTE}`);
+    });
+
+    it("não repete quando o modelo já falou da pausa", () => {
+      const content = "O INC-30 aguarda sua resposta; o prazo está pausado.";
+      assert.equal(compose({ decision: { ...decision, content }, executions: [waiting] })?.content, content);
+    });
+
+    it("se o modelo já disse que o analista aguarda, acrescenta só a pausa", () => {
+      const reply = compose({ decision: { ...decision, content: "O INC-30 está aguardando funcionário, pois o analista aguarda a sua resposta." }, executions: [waiting] });
+      assert.equal(reply?.content, "O INC-30 está aguardando funcionário, pois o analista aguarda a sua resposta. O prazo fica pausado até lá.");
+    });
+
+    it("reconhece 'em pausa' e não confunde 'parado' com a pausa do prazo", () => {
+      const paused = "O INC-30 aguarda você; o prazo está em pausa.";
+      assert.equal(compose({ decision: { ...decision, content: paused }, executions: [waiting] })?.content, paused);
+      const stalled = "O INC-30 está parado aguardando a sua resposta.";
+      assert.equal(compose({ decision: { ...decision, content: stalled }, executions: [waiting] })?.content, `${stalled} O prazo fica pausado até lá.`);
+    });
+
+    it("'aguardando você' conta como já dito: acrescenta só a pausa", () => {
+      const reply = compose({ decision: { ...decision, content: "O INC-30 está aguardando você." }, executions: [waiting] });
+      assert.equal(reply?.content, "O INC-30 está aguardando você. O prazo fica pausado até lá.");
+    });
+
+    it("prazo citado pelo modelo vira o template", () => {
+      for (const content of ["O INC-30 vence em 30/10.", "O INC-30 está com o prazo vencido."]) {
+        assert.equal(compose({ decision: { ...decision, content }, executions: [waiting] })?.content, templateFor(waiting), content);
+      }
+    });
+
+    it("outros status não ganham o aviso", () => {
+      const reply = compose({ decision: { ...decision, content: "O INC-20311 está em atendimento." }, executions: [{ ...single, tickets: [ticket("INC-20311")] }] });
+      assert.equal(reply?.content, "O INC-20311 está em atendimento.");
     });
   });
 
@@ -548,5 +667,125 @@ describe("composeReply", () => {
 
   it("não aceita decisão com conteúdo vazio", () => {
     assert.equal(compose({ decision: { ...decision, content: "   " } }), null);
+  });
+});
+
+describe("central de ajuda", () => {
+  const vpn = { slug: "vpn-erro-809", title: "VPN com erro 809", category: "NETWORK_VPN" as const, content: "Reinstale o cliente de VPN. Vale apenas para Windows 10." };
+  const hours = { slug: "horario-service-desk", title: "Horário do service desk", category: "OTHER" as const, content: "De segunda a sexta, das 8h às 18h." };
+  const found = { outcome: "FOUND" as const, articles: [vpn] };
+  const question: LlmDecision = { content: "Reinstale o cliente de VPN pelo portal de softwares e reinicie o computador.", understood: "Dúvida sobre VPN", intent: "QUESTION", confidence: "HIGH", reason: "Artigo cobre o caso" };
+  const cited = { ...question, articleSlug: "vpn-erro-809" };
+
+  it("ações do trace saem das buscas reais", () => {
+    const reply = compose({ decision: question, articleSearches: [found, { outcome: "FOUND", articles: [vpn, hours] }, { outcome: "NO_MATCH", articles: [] }, { outcome: "UNAVAILABLE", articles: [] }] });
+    assert.deepEqual(reply?.trace.actions, [
+      { tool: "searchHelpCenter", summary: "Central de ajuda: 1 artigo encontrado (VPN com erro 809).", status: "SUCCESS" },
+      { tool: "searchHelpCenter", summary: "Central de ajuda: 2 artigos encontrados (VPN com erro 809; Horário do service desk).", status: "SUCCESS" },
+      { tool: "searchHelpCenter", summary: "Central de ajuda: nenhum artigo.", status: "SUCCESS" },
+      { tool: "searchHelpCenter", summary: "Central de ajuda indisponível.", status: "ERROR" },
+    ]);
+  });
+
+  it("slug da busca do turno vira sources, nota de fonte e respostas rápidas", () => {
+    const reply = compose({ decision: cited, articleSearches: [found] });
+    assert.deepEqual(reply?.trace.sources, [{ kind: "ARTICLE", slug: "vpn-erro-809", title: "VPN com erro 809" }]);
+    assert.deepEqual(reply?.quickReplies, HELP_QUICK_REPLIES);
+    assert.deepEqual(HELP_QUICK_REPLIES, ["Resolveu, obrigado", "Não resolveu, abrir chamado"]);
+    assert.equal(reply?.content, `${cited.content} ${articleNote("VPN com erro 809")}`);
+    assert.equal(agentTraceSchema.safeParse(reply?.trace).success, true);
+  });
+
+  it("slug fora dos resultados do turno é descartado com motivo no trace", () => {
+    const reply = compose({ decision: { ...question, articleSlug: "horario-service-desk" }, articleSearches: [found] });
+    assert.equal(reply?.trace.sources, undefined);
+    assert.equal(reply?.quickReplies ?? null, null);
+    assert.equal(reply?.content, question.content);
+    assert.deepEqual(reply?.trace.actions.at(-1), { tool: "citeArticle", summary: "Citação descartada: o artigo não veio da busca deste turno.", status: "SKIPPED" });
+  });
+
+  it("sem busca no turno, nenhum slug vale", () => {
+    const reply = compose({ decision: cited });
+    assert.equal(reply?.trace.sources, undefined);
+    assert.equal(reply?.trace.actions.at(-1)?.status, "SKIPPED");
+  });
+
+  it("nota de fonte escrita pelo modelo é removida: só o código a escreve", () => {
+    const reply = compose({ decision: { ...question, content: `${question.content} ${articleNote("Artigo inventado")}` }, articleSearches: [found] });
+    assert.equal(reply?.content, question.content);
+    assert.equal(citedArticleIn(reply?.content ?? ""), null);
+  });
+
+  it("resposta que é só a nota forjada não é gravada nem citada", () => {
+    const reply = compose({ decision: { ...cited, content: articleNote("Artigo inventado") }, articleSearches: [found] });
+    assert.equal(citedArticleIn(reply?.content ?? ""), null);
+    assert.equal(reply?.trace.sources, undefined);
+    assert.equal(reply?.quickReplies ?? null, null);
+  });
+
+  it("slug fora do formato também é descartado com motivo no trace", () => {
+    const decision = parseDecision({ ...question, articleSlug: "VPN Erro 809!" }, "");
+    const reply = compose({ decision, articleSearches: [found] });
+    assert.equal(reply?.trace.sources, undefined);
+    assert.equal(reply?.trace.actions.at(-1)?.tool, "citeArticle");
+  });
+
+  it("fora de escopo nunca cita", () => {
+    const reply = compose({ decision: { ...cited, intent: "OUT_OF_SCOPE" }, articleSearches: [found] });
+    assert.equal(reply?.content, OUT_OF_SCOPE_REPLY);
+    assert.equal(reply?.trace.sources, undefined);
+    assert.equal(reply?.quickReplies, null);
+    assert.equal(reply?.trace.actions[0]?.tool, "searchHelpCenter");
+  });
+
+  it("rascunho vence a citação", () => {
+    const drafts: DraftExecution[] = [{ outcome: "NEEDS_AFFECTED_SCOPE" }];
+    const reply = compose({ decision: cited, articleSearches: [found], drafts });
+    assert.equal(reply?.content, "Quem está sendo afetado?");
+    assert.equal(reply?.trace.sources, undefined);
+  });
+
+  it("resposta barrada não cita", () => {
+    const reply = compose({ decision: { ...cited, content: "Abri o chamado INC-999 para você." }, articleSearches: [found] });
+    assert.equal(reply?.trace.sources, undefined);
+    assert.equal(reply?.quickReplies ?? null, null);
+  });
+
+  it("parseDecision guarda articleSlug e descarta valor inválido", () => {
+    assert.equal(parseDecision({ ...question, articleSlug: "vpn-erro-809" }, "")?.articleSlug, "vpn-erro-809");
+    assert.equal(parseDecision({ ...question, articleSlug: 42 }, "")?.articleSlug, undefined);
+    assert.equal("articleSlug" in llmDecisionSchema.shape, true);
+  });
+
+  describe("triedArticleFrom", () => {
+    const citation = `Reinstale o cliente. ${articleNote("VPN com erro 809")}`;
+    it("vale quando o usuário responde que não resolveu logo depois da citação", () => {
+      assert.equal(triedArticleFrom([{ authorType: "AGENT", content: citation }], "Não resolveu, abrir chamado"), "VPN com erro 809");
+      assert.equal(triedArticleFrom([{ authorType: "AGENT", content: citation }], "não funcionou"), "VPN com erro 809");
+    });
+
+    it("sobrevive à pergunta de afetados", () => {
+      const history = [
+        { authorType: "AGENT", content: citation },
+        { authorType: "EMPLOYEE", content: "Não resolveu, abrir chamado" },
+        { authorType: "AGENT", content: "Quem está sendo afetado?" },
+      ];
+      assert.equal(triedArticleFrom(history, "Só eu"), "VPN com erro 809");
+    });
+
+    it("não vale se o usuário disse que resolveu, mudou de assunto ou a criação terminou", () => {
+      assert.equal(triedArticleFrom([{ authorType: "AGENT", content: citation }], "Resolveu, obrigado"), null);
+      assert.equal(triedArticleFrom([{ authorType: "AGENT", content: citation }, { authorType: "EMPLOYEE", content: "ok" }, { authorType: "AGENT", content: "Certo." }], "não resolveu"), null);
+      const done = [
+        { authorType: "AGENT", content: citation },
+        { authorType: "EMPLOYEE", content: "Não resolveu" },
+        { authorType: "AGENT", content: "Coloquei prioridade Média. Confira antes de eu criar:" },
+      ];
+      assert.equal(triedArticleFrom(done, "Outra coisa"), null);
+    });
+
+    it("só lê a nota em mensagem do agent", () => {
+      assert.equal(triedArticleFrom([{ authorType: "EMPLOYEE", content: citation }], "Não resolveu"), null);
+    });
   });
 });

@@ -9,6 +9,7 @@ const msg = (
   authorType: ConsoleMessageData["authorType"],
   createdAt: string,
   content = "oi",
+  systemKind: ConsoleMessageData["systemKind"] = null,
 ): ConsoleMessageData => ({
   id,
   authorType,
@@ -20,11 +21,10 @@ const msg = (
         : null,
   content,
   createdAt,
+  systemKind,
 });
-const build = (
-  messages: ConsoleMessageData[],
-  handoffAt: string | null = null,
-) => buildConsoleTimeline(messages, { handoffAt, ownerName: "Ana Souza", now });
+const build = (messages: ConsoleMessageData[]) =>
+  buildConsoleTimeline(messages, { ownerName: "Ana Souza", now });
 
 describe("buildConsoleTimeline", () => {
   it("põe a pílula do dia antes do primeiro item e quando a data muda", () => {
@@ -75,23 +75,18 @@ describe("buildConsoleTimeline", () => {
     ]);
   });
 
-  it("mostra SYSTEM como evento com hora, com ícone de transferência e de assumir", () => {
-    const handoffAt = "2026-10-20T10:05:00.001Z";
-    const items = build(
-      [
-        msg("1", "SYSTEM", handoffAt, "Transferida para um analista"),
-        msg(
-          "2",
-          "SYSTEM",
-          "2026-10-20T13:12:00.000Z",
-          "Rafael assumiu a conversa",
-        ),
-      ],
-      handoffAt,
-    ).filter((i) => i.kind === "event");
+  it("mostra SYSTEM como evento com hora e o ícone do systemKind", () => {
+    const items = build([
+      msg("1", "SYSTEM", "2026-10-20T10:05:00.000Z", "Transferida para um analista", "HANDOFF"),
+      msg("2", "SYSTEM", "2026-10-20T10:12:00.000Z", "Rafael assumiu a conversa", "TAKEOVER"),
+      msg("3", "SYSTEM", "2026-10-20T10:20:00.000Z", "Conversa devolvida ao agent", "RETURNED"),
+      msg("4", "SYSTEM", "2026-10-20T10:25:00.000Z", "Rafael encerrou o atendimento", "CLOSED"),
+    ]).filter((i) => i.kind === "event");
     expect(items.map((i) => i.kind === "event" && i.icon)).toEqual([
       "transfer",
       "takeover",
+      "return",
+      null,
     ]);
     expect(items[0]).toMatchObject({
       label: expect.stringMatching(
@@ -100,14 +95,14 @@ describe("buildConsoleTimeline", () => {
     });
   });
 
-  it("reconhece a transferência pelo texto mesmo sem handoffAt", () => {
+  it("decide o ícone pelo systemKind, nunca pelo texto", () => {
     const items = build([
-      msg("1", "SYSTEM", "2026-10-20T10:05:00.000Z", "Transferida para um analista"),
-      msg("2", "SYSTEM", "2026-10-20T10:06:00.000Z", "Conversa devolvida ao agent"),
+      msg("1", "SYSTEM", "2026-10-20T10:05:00.000Z", "Transferida para um analista", null),
+      msg("2", "SYSTEM", "2026-10-20T10:06:00.000Z", "Texto novo do backend", "HANDOFF"),
     ]).filter((i) => i.kind === "event");
     expect(items.map((i) => i.kind === "event" && i.icon)).toEqual([
-      "transfer",
       null,
+      "transfer",
     ]);
   });
 

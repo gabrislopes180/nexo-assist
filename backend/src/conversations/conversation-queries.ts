@@ -1,4 +1,5 @@
 import type { PrismaClient, Prisma } from "../generated/prisma/client.js";
+import type { MessageAuthorType } from "../generated/prisma/enums.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
@@ -15,13 +16,17 @@ export const CLOSED_VISIBLE_MS = 48 * 60 * 60 * 1000;
 
 export type ConsoleFilter = "all" | "waiting" | "with-agent" | "mine";
 
+type ListAuthorType = "EMPLOYEE" | "AGENT" | "ANALYST";
+
 export type ConsoleRow = ConversationSnapshot & {
-  lastMessage: { authorType: "EMPLOYEE" | "AGENT" | "ANALYST"; content: string; createdAt: Date } | null;
+  lastMessage: { authorType: ListAuthorType; content: string; createdAt: Date } | null;
   lastAgentConfidence: AgentTrace["confidence"] | null;
   ticketCode: string | null;
 };
 
-type Reader = Pick<PrismaClient, "conversation" | "message" | "ticket" | "ticketEvent">;
+type Reader = Pick<PrismaClient, "conversation" | "message" | "ticket" | "ticketEvent" | "user">;
+
+const LIST_AUTHOR_TYPES = ["EMPLOYEE", "AGENT", "ANALYST"] as const satisfies readonly ListAuthorType[];
 
 const TICKET_CODE_PATTERN = /\b(INC|REQ)-\d+\b/gi;
 
@@ -38,29 +43,69 @@ function filterWhere(filter: ConsoleFilter, analystId: string): Prisma.Conversat
   }
 }
 
-async function lastMessagesOf(client: Reader, ids: string[]) {
-  const rows = await client.message.findMany({
-    where: { conversationId: { in: ids }, authorType: { in: ["EMPLOYEE", "AGENT", "ANALYST"] } },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    distinct: ["conversationId"],
-    select: { conversationId: true, authorType: true, content: true, createdAt: true },
-  });
-  return new Map(rows.map((row) => [row.conversationId, row] as const));
+function isListAuthor(authorType: MessageAuthorType): authorType is ListAuthorType {
+  return (LIST_AUTHOR_TYPES as readonly MessageAuthorType[]).includes(authorType);
 }
 
-async function lastAgentConfidencesOf(client: Reader, ids: string[]) {
+type LatestKey = { conversationId: string; createdAt: Date };
+
+/** As chaves (conversa, maior createdAt) de um `groupBy`; grupo sem conversa ou sem data fica de fora. */
+function latestKeysOf(groups: ReadonlyArray<{ conversationId: string | null; _max: { createdAt: Date | null } }>): LatestKey[] {
+  return groups.flatMap(({ conversationId, _max }) => (conversationId && _max.createdAt ? [{ conversationId, createdAt: _max.createdAt }] : []));
+}
+
+/** Entre as linhas no maior createdAt, a de maior id: o mesmo desempate de `orderBy [createdAt desc, id desc]`. */
+function newestPerConversation<T extends { id: string; conversationId: string | null }>(rows: readonly T[]): Map<string, T> {
+  const newest = new Map<string, T>();
+  for (const row of rows) {
+    if (!row.conversationId) continue;
+    const current = newest.get(row.conversationId);
+    if (!current || row.id > current.id) newest.set(row.conversationId, row);
+  }
+  return newest;
+}
+
+/*
+ * "A última por conversa" em duas consultas que custam O(conversas): o `groupBy` acha o maior
+ * createdAt de cada uma e a segunda lê só as linhas nesse instante, com os campos usados. O
+ * `distinct` do Prisma carregava todas as linhas (com o trace inteiro) para descartar em memória.
+ */
+
+async function lastMessagesOf(client: Reader, ids: string[]) {
+  const where = { conversationId: { in: ids }, authorType: { in: [...LIST_AUTHOR_TYPES] } };
+  const groups = await client.message.groupBy({ by: ["conversationId"], where, _max: { createdAt: true } });
+  const keys = latestKeysOf(groups);
+  if (keys.length === 0) return new Map<string, { id: string; conversationId: string; authorType: ListAuthorType; content: string; createdAt: Date }>();
   const rows = await client.message.findMany({
-    where: { conversationId: { in: ids }, authorType: "AGENT" },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    distinct: ["conversationId"],
-    select: { conversationId: true, trace: true },
+    where: { ...where, OR: keys },
+    select: { id: true, conversationId: true, authorType: true, content: true, createdAt: true },
   });
+  return newestPerConversation(rows.flatMap(({ authorType, ...row }) => (isListAuthor(authorType) ? [{ ...row, authorType }] : [])));
+}
+
+async function lastAgentConfidencesOf(client: Reader, ids: string[]): Promise<Map<string, AgentTrace["confidence"] | null>> {
+  const where = { conversationId: { in: ids }, authorType: "AGENT" } as const;
+  const groups = await client.message.groupBy({ by: ["conversationId"], where, _max: { createdAt: true } });
+  const keys = latestKeysOf(groups);
+  if (keys.length === 0) return new Map();
+  const rows = await client.message.findMany({ where: { ...where, OR: keys }, select: { id: true, conversationId: true, trace: true } });
   return new Map(
-    rows.map((row) => {
+    [...newestPerConversation(rows)].map(([conversationId, row]) => {
       const trace = agentTraceSchema.safeParse(row.trace);
-      return [row.conversationId, trace.success ? trace.data.confidence : null] as const;
+      return [conversationId, trace.success ? trace.data.confidence : null] as const;
     }),
   );
+}
+
+async function lastEventCodesOf(client: Reader, ids: string[]): Promise<Map<string, string>> {
+  const groups = await client.ticketEvent.groupBy({ by: ["conversationId"], where: { conversationId: { in: ids } }, _max: { createdAt: true } });
+  const keys = latestKeysOf(groups);
+  if (keys.length === 0) return new Map();
+  const rows = await client.ticketEvent.findMany({
+    where: { OR: keys },
+    select: { id: true, conversationId: true, ticket: { select: { code: true } } },
+  });
+  return new Map([...newestPerConversation(rows)].map(([conversationId, row]) => [conversationId, row.ticket.code] as const));
 }
 
 /**
@@ -71,14 +116,10 @@ export async function ticketCodesFor(
   client: Reader,
   rows: ReadonlyArray<Pick<ConversationSnapshot, "id" | "handoffSummary"> & { owner: { id: string } }>,
 ): Promise<Map<string, string | null>> {
-  const ids = rows.map((row) => row.id);
-  const events = await client.ticketEvent.findMany({
-    where: { conversationId: { in: ids } },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    distinct: ["conversationId"],
-    select: { conversationId: true, ticket: { select: { code: true } } },
-  });
-  const byEvent = new Map(events.map((event) => [event.conversationId ?? "", event.ticket.code] as const));
+  const byEvent = await lastEventCodesOf(
+    client,
+    rows.map((row) => row.id),
+  );
 
   const candidates = new Map<string, string[]>();
   for (const row of rows) {
@@ -112,39 +153,70 @@ async function enrich(client: Reader, snapshots: ConversationSnapshot[]): Promis
     const last = lastMessages.get(snapshot.id);
     return {
       ...snapshot,
-      lastMessage:
-        last && last.authorType !== "SYSTEM"
-          ? { authorType: last.authorType, content: last.content, createdAt: last.createdAt }
-          : null,
+      lastMessage: last ? { authorType: last.authorType, content: last.content, createdAt: last.createdAt } : null,
       lastAgentConfidence: confidences.get(snapshot.id) ?? null,
       ticketCode: ticketCodes.get(snapshot.id) ?? null,
     };
   });
 }
 
+/** O termo normalizado no nome do dono ou no chamado derivado da conversa. */
+function matchesSearch(row: ConsoleRow, term: string): boolean {
+  return [row.owner.name, row.ticketCode ?? ""].some((text) => normalizeSearchText(text).includes(term));
+}
+
 /**
- * Não encerradas mais as encerradas nas últimas 48 h, por `lastMessageAt` desc, cortadas em 200
- * no banco. A busca `q` roda em memória depois de derivar o chamado: o SQLite não ignora acento.
+ * Pré-filtro de `q` no banco, mais largo que `matchesSearch`. O nome é comparado em memória sobre
+ * os usuários (o SQLite não ignora acento) e vira `ownerId in`. O chamado derivado depende do
+ * evento mais recente ou do dono do código citado no resumo, então o banco aceita qualquer evento
+ * ou resumo com o termo (`contains` no SQLite ignora caixa em ASCII, e os códigos são ASCII).
+ */
+async function searchWhere(client: Reader, term: string): Promise<Prisma.ConversationWhereInput> {
+  const users = await client.user.findMany({ select: { id: true, name: true } });
+  const ownerIds = users.filter((user) => normalizeSearchText(user.name).includes(term)).map((user) => user.id);
+  return {
+    OR: [
+      { ownerId: { in: ownerIds } },
+      { ticketEvents: { some: { ticket: { code: { contains: term } } } } },
+      { handoffSummary: { contains: term } },
+    ],
+  };
+}
+
+/**
+ * Não encerradas mais as encerradas nas últimas 48 h, por `lastMessageAt` desc, cortadas em `limit`.
+ * Com `q`, o banco pré-filtra e `matchesSearch` decide; lê páginas até juntar `limit`, para um
+ * candidato que não casa não tirar da lista uma conversa mais antiga que casa.
  */
 export async function listForConsole(
   client: Reader,
   { now, filter, analystId, q }: { now: Date; filter: ConsoleFilter; analystId: string; q?: string },
+  limit = CONSOLE_LIST_LIMIT,
 ): Promise<ConsoleRow[]> {
-  const snapshots = await client.conversation.findMany({
-    where: {
-      AND: [
-        { OR: [{ status: { not: "CLOSED" } }, { closedAt: { gte: new Date(now.getTime() - CLOSED_VISIBLE_MS) } }] },
-        filterWhere(filter, analystId),
-      ],
-    },
-    orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
-    take: CONSOLE_LIST_LIMIT,
-    select: snapshotSelect,
-  });
-  const rows = await enrich(client, snapshots);
   const term = q ? normalizeSearchText(q) : "";
-  if (!term) return rows;
-  return rows.filter((row) => normalizeSearchText(`${row.owner.name} ${row.ticketCode ?? ""}`).includes(term));
+  const conditions: Prisma.ConversationWhereInput[] = [
+    { OR: [{ status: { not: "CLOSED" } }, { closedAt: { gte: new Date(now.getTime() - CLOSED_VISIBLE_MS) } }] },
+    filterWhere(filter, analystId),
+  ];
+  if (term) conditions.push(await searchWhere(client, term));
+  const page = (skip: number) =>
+    client.conversation.findMany({
+      where: { AND: conditions },
+      orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
+      skip,
+      take: limit,
+      select: snapshotSelect,
+    });
+
+  if (!term) return enrich(client, await page(0));
+  // Por id: uma mensagem nova entre duas páginas desloca o offset e repetiria a linha.
+  const matches = new Map<string, ConsoleRow>();
+  for (let skip = 0; matches.size < limit; skip += limit) {
+    const snapshots = await page(skip);
+    for (const row of await enrich(client, snapshots)) if (matchesSearch(row, term) && !matches.has(row.id)) matches.set(row.id, row);
+    if (snapshots.length < limit) break;
+  }
+  return [...matches.values()].slice(0, limit);
 }
 
 export async function findForConsole(client: Reader, conversationId: string): Promise<ConsoleRow> {

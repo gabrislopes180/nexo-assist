@@ -1,5 +1,5 @@
 import type { TicketCategory, TicketPriority, TicketType } from "../generated/prisma/enums.js";
-import { normalizeSearchText } from "../knowledge/search-text.js";
+import { isSignificant, normalizedKeywords, normalizeSearchText } from "../knowledge/search-text.js";
 import type { TicketLookupCriteria, TicketSummary } from "../shared/chat.js";
 import { isOverdue } from "./sla.js";
 import { TICKET_CATEGORY_LABEL, TICKET_STATUS_LABEL, type OpenTicketStatus } from "./ticket-rules.js";
@@ -31,11 +31,6 @@ function matchesFilters(ticket: MatchableTicket, criteria: TicketLookupCriteria)
   );
 }
 
-/** Keyword repetida não pontua duas vezes, e a só de espaços viraria "" e casaria com tudo. */
-function normalizedKeywords(keywords: readonly string[]): string[] {
-  return [...new Set(keywords.map(normalizeSearchText))].filter((keyword) => keyword !== "");
-}
-
 type SearchableTicket = Pick<MatchableTicket, "title" | "description" | "category">;
 type RankableTicket = Pick<MatchableTicket, "code" | "createdAt" | "dueAt">;
 
@@ -54,19 +49,6 @@ function topScored<T extends SearchableTicket>(tickets: readonly T[], keywords: 
 
 export function bestKeywordMatches<T extends SearchableTicket>(tickets: readonly T[], rawKeywords: readonly string[]): readonly T[] {
   return topScored(tickets, normalizedKeywords(rawKeywords), 1);
-}
-
-/** Termos que aparecem em qualquer relato de problema e não dizem qual é o problema (já normalizados). */
-const GENERIC_TERMS = new Set([
-  "parou", "parar", "parado", "parada", "para", "funciona", "funcionar", "funcionando", "funcionou",
-  "nao", "sem", "com", "que", "meu", "minha", "esta", "ficou", "mais", "muito", "hoje",
-  "problema", "problemas", "erro", "erros", "falha", "falhas", "falhando", "defeito", "quebrou", "quebrado",
-  "ajuda", "preciso", "consigo", "conseguir", "consegue",
-]);
-
-/** Keyword com ao menos um termo de 3 letras ou mais que não seja genérico. */
-function isSignificant(keyword: string): boolean {
-  return keyword.split(" ").some((term) => term.length >= 3 && !GENERIC_TERMS.has(term));
 }
 
 /**

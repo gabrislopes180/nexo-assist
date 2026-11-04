@@ -1,4 +1,5 @@
 import type { HandoffProposal, ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../../shared/chat.js";
+import type { HelpCenterSearchResult } from "../../shared/knowledge.js";
 
 /** Execução de `transferToAnalyst`. Recusada: a conversa continua com o agent. */
 export type HandoffExecution =
@@ -35,13 +36,21 @@ export type TurnRecorder = {
   drafts(): readonly DraftExecution[];
   recordHandoff(execution: HandoffExecution): void;
   handoffs(): readonly HandoffExecution[];
+  /** Buscas na central de ajuda: só slug que veio daqui pode ser citado. */
+  recordArticleSearch(result: HelpCenterSearchResult): void;
+  articleSearches(): readonly HelpCenterSearchResult[];
 };
 
 export function createTurnRecorder(): TurnRecorder {
   const lookups: TicketLookupResult[] = [];
   const drafts: DraftExecution[] = [];
   const handoffs: HandoffExecution[] = [];
+  const articleSearches: HelpCenterSearchResult[] = [];
   return {
+    recordArticleSearch: (result) => {
+      articleSearches.push(result);
+    },
+    articleSearches: () => articleSearches,
     recordHandoff: (execution) => {
       handoffs.push(execution);
     },
@@ -76,5 +85,7 @@ export type TurnContextValues = {
   knownCodes: readonly string[];
   /** Um analista já devolveu a conversa: pelo resto dela, só um pedido explícito transfere. */
   returnedFromAnalyst: boolean;
+  /** Título do artigo que o usuário disse não ter resolvido: o chamado novo leva "Já tentou: <título>." */
+  triedArticle: string | null;
   recorder: TurnRecorder;
 };

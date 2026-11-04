@@ -1,5 +1,5 @@
 import type { Prisma } from "../generated/prisma/client.js";
-import type { ConversationStatus, HandoffReason, MessageAuthorType } from "../generated/prisma/enums.js";
+import type { ConversationStatus, HandoffReason, MessageAuthorType, SystemMessageKind } from "../generated/prisma/enums.js";
 import type { TimelineMessageView } from "../shared/console.js";
 import { agentTraceSchema, type AgentTrace } from "../shared/transparency.js";
 import { ConversationNotFoundError } from "./conversation-rules.js";
@@ -11,6 +11,8 @@ export type TimelineMessage = {
   id: string;
   conversationId: string;
   authorType: MessageAuthorType;
+  /** Qual aviso é a mensagem SYSTEM; null nas demais. */
+  systemKind: SystemMessageKind | null;
   /** EMPLOYEE = dono, ANALYST = analista; AGENT e SYSTEM = null. */
   author: Person | null;
   content: string;
@@ -45,6 +47,7 @@ export const timelineMessageSelect = {
   id: true,
   conversationId: true,
   authorType: true,
+  systemKind: true,
   content: true,
   createdAt: true,
   trace: true,
@@ -59,6 +62,7 @@ export function toTimelineMessage(row: TimelineMessageRow): TimelineMessage {
     id: row.id,
     conversationId: row.conversationId,
     authorType: row.authorType,
+    systemKind: row.authorType === "SYSTEM" ? row.systemKind : null,
     author: row.authorType === "EMPLOYEE" || row.authorType === "ANALYST" ? row.author : null,
     content: row.content,
     createdAt: row.createdAt,
@@ -91,6 +95,7 @@ export function toTimelineMessageView(message: TimelineMessage): TimelineMessage
   return {
     id: message.id,
     authorType: message.authorType,
+    systemKind: message.systemKind,
     author: message.author,
     content: message.content,
     createdAt: message.createdAt.toISOString(),

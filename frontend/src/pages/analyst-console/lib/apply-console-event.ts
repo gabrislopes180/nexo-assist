@@ -4,14 +4,14 @@ import {
   consoleConversationSchema,
   upsertConsoleConversation,
 } from "@/entities/conversation";
-import { appendConsoleMessage, timelineMessageSchema } from "@/entities/message";
+import {
+  appendConsoleMessage,
+  messageCreatedEventSchema,
+} from "@/entities/message";
+import { consoleTicketKeys } from "@/entities/ticket";
 import { CONSOLE_QUERY_ROOT } from "@/shared/api/query-keys";
+import { isResync } from "@/shared/api/stream-sync";
 
-const syncSchema = z.object({ mode: z.enum(["REPLAY", "RESYNC"]) });
-const messageCreatedSchema = z.object({
-  conversationId: z.string().min(1),
-  message: timelineMessageSchema,
-});
 const conversationUpdatedSchema = z.object({
   conversation: consoleConversationSchema,
 });
@@ -32,27 +32,37 @@ export function applyConsoleEvent(
 ): void {
   switch (type) {
     case "sync": {
-      const parsed = syncSchema.safeParse(data);
-      // RESYNC: o servidor não tem como repor o que se perdeu. Também no primeiro sync.
-      if (parsed.success && parsed.data.mode === "RESYNC") {
+      // RESYNC: o servidor não tem como repor o que se perdeu. Vale também no
+      // primeiro sync: o GET inicial sai antes da inscrição no servidor (que só
+      // acontece depois de validar a sessão), e um evento entre a leitura dele e
+      // a inscrição se perderia. Reabrir o stream no mesmo componente pede
+      // REPLAY (use-event-stream) e não cai aqui.
+      if (isResync(data)) {
         void qc.invalidateQueries({ queryKey: CONSOLE_QUERY_ROOT });
       }
       return;
     }
     case "message.created": {
-      const parsed = messageCreatedSchema.safeParse(data);
+      const parsed = messageCreatedEventSchema.safeParse(data);
       if (parsed.success) {
-        appendConsoleMessage(qc, parsed.data.conversationId, parsed.data.message);
+        appendConsoleMessage(
+          qc,
+          parsed.data.conversationId,
+          parsed.data.message,
+        );
       }
       return;
     }
     case "conversation.updated": {
       const parsed = conversationUpdatedSchema.safeParse(data);
-      if (parsed.success) upsertConsoleConversation(qc, parsed.data.conversation);
+      if (parsed.success)
+        upsertConsoleConversation(qc, parsed.data.conversation);
       return;
     }
     case "tickets.changed":
-      void qc.invalidateQueries({ queryKey: [...CONSOLE_QUERY_ROOT, "tickets"] });
+      // Sem ler o payload: `conversationId` pode vir null e o prefixo cobre a
+      // lista de cada conversa e o detalhe aberto. Os dados ficam na tela no refetch.
+      void qc.invalidateQueries({ queryKey: consoleTicketKeys.all });
       return;
   }
 }

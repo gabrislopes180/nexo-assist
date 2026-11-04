@@ -11,6 +11,7 @@ const message = (id: string, conversationId = "c1"): TimelineMessage => ({
   id,
   conversationId,
   authorType: "SYSTEM",
+  systemKind: "HANDOFF",
   author: null,
   content: id,
   createdAt: NOW,
@@ -98,6 +99,44 @@ describe("fan-out das mudanças", () => {
     assert.deepEqual(summary(), ["message.created:c1:m1", "tickets.changed:c1:", "message.created:c2:m2", "conversation.updated:c2:"]);
     assert.equal(logged.mock.callCount(), 1);
     assert.doesNotMatch(JSON.stringify(logged.mock.calls[0]?.arguments), /segredo/);
+  });
+
+  it("tickets.changed da confirmação leva o código do chamado", async () => {
+    const { bus, events } = recordingBus();
+    const fanout = createFanout({ bus, readConversation: (id) => Promise.resolve(row(id)) });
+    fanout.publish({ conversationId: "c1", ownerId: "u1", messages: [], ticketsChanged: true, ticketCode: "INC-7" });
+    await fanout.idle();
+    const last = events.at(-1);
+    assert.deepEqual(last?.type === "tickets.changed" ? [last.conversationId, last.ticketCode] : null, ["c1", "INC-7"]);
+  });
+
+  it("publishTicketChange publica só tickets.changed, na mesma fila das conversas", async () => {
+    const { bus, events, summary } = recordingBus();
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fanout = createFanout({
+      bus,
+      readConversation: async (id) => {
+        await slow;
+        return row(id);
+      },
+    });
+    fanout.publish({ conversationId: "c1", ownerId: "u1", messages: [message("m1")], ticketsChanged: false });
+    fanout.publishTicketChange({ ownerId: "u2", ticketCode: "REQ-3", conversationId: null });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(summary(), ["message.created:c1:m1"]);
+    release();
+    await fanout.idle();
+    assert.deepEqual(summary(), ["message.created:c1:m1", "conversation.updated:c1:", "tickets.changed:null:"]);
+    const last = events.at(-1);
+    assert.deepEqual(last?.type === "tickets.changed" ? [last.ownerId, last.ticketCode] : null, ["u2", "REQ-3"]);
+  });
+
+  it("publishTicketChange nunca lança para quem chama", () => {
+    const fanout = createFanout({ bus: createEventBus(), readConversation: () => Promise.reject(new Error("x")) });
+    assert.doesNotThrow(() => fanout.publishTicketChange({ ownerId: "u1", ticketCode: "INC-1", conversationId: "c1" }));
   });
 
   it("publish nunca lança para quem chama", () => {

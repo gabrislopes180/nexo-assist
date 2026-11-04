@@ -16,7 +16,7 @@ import type { ChatResponse, ConfirmDraftResponse, ProposedTicketDraft } from "..
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService, TicketServiceUnavailableError, type ResolvedTicketReader, type TicketAvailability, type TicketCodeReader } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
-import { unusedConsoleService } from "./test-support.js";
+import { unusedConsoleService, unusedConsoleTicketService, unusedKnowledgeService } from "./test-support.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -98,7 +98,7 @@ describe("rotas de criação de chamado", () => {
       },
     };
     const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets });
-    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService, consoleTicketService: unusedConsoleTicketService, knowledgeService: unusedKnowledgeService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });

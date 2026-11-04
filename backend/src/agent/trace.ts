@@ -1,11 +1,14 @@
 import { z } from "zod";
 import type { AgentTurnResult } from "../chat/agent-runner.js";
+import { REDIRECT_AREAS, redirectReply, redirectSummary, type RedirectArea } from "../knowledge/redirect-targets.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
 import type { ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../shared/chat.js";
+import type { HelpArticle, HelpCenterSearchResult } from "../shared/knowledge.js";
 import { AGENT_INTENTS, type AgentAction, type AgentTrace } from "../shared/transparency.js";
 import { isOpen, TICKET_PRIORITY_LABEL } from "../tickets/ticket-rules.js";
 import { DRAFT_COMPLEMENT_TOOL } from "./tools/draft-complement.js";
 import { AFFECTED_QUESTION, AFFECTED_QUICK_REPLIES, DRAFT_TICKET_TOOL } from "./tools/draft-ticket.js";
+import { SEARCH_HELP_CENTER_TOOL } from "./tools/search-help-center.js";
 import { SEARCH_MY_OPEN_TICKETS_TOOL } from "./tools/search-my-open-tickets.js";
 import { DRAFT_REOPEN_TOOL } from "./tools/draft-reopen.js";
 import { isBareConfirmation } from "./confirmation.js";
@@ -20,6 +23,10 @@ export const llmDecisionSchema = z.object({
   intent: z.enum(AGENT_INTENTS),
   confidence: z.enum(["HIGH", "MEDIUM", "LOW"]),
   reason: z.string().min(1),
+  /** Só com OUT_OF_SCOPE: a área para onde encaminhar. O texto e o contato saem do código. */
+  redirectTo: z.enum(REDIRECT_AREAS).nullable().optional(),
+  /** Slug do artigo em que a resposta se baseou. O código só aceita slug devolvido por searchHelpCenter neste turno. */
+  articleSlug: z.string().nullable().optional(),
 });
 
 /** Campo inválido cai para undefined e recebe fallback; só sem `content` não há decisão. */
@@ -29,6 +36,9 @@ const lenientDecisionSchema = z.object({
   intent: z.enum(AGENT_INTENTS).optional().catch(undefined),
   confidence: z.enum(["HIGH", "MEDIUM", "LOW"]).optional().catch(undefined),
   reason: z.string().min(1).optional().catch(undefined),
+  redirectTo: z.enum(REDIRECT_AREAS).nullable().optional().catch(undefined),
+  // Sem regex aqui: slug fora do formato chega a `withCitation` e é descartado com motivo no trace.
+  articleSlug: z.string().max(200).nullable().optional().catch(undefined),
 });
 
 export type LlmDecision = z.infer<typeof lenientDecisionSchema>;
@@ -42,6 +52,8 @@ export type ReplyInput = {
   executions: readonly TicketLookupResult[];
   drafts: readonly DraftExecution[];
   handoffs?: readonly HandoffExecution[];
+  /** Buscas na central de ajuda do turno: a citação só vale para artigo daqui. */
+  articleSearches?: readonly HelpCenterSearchResult[];
   /** A última resposta do agent ofereceu analista: "Sim, confirmo" responde à oferta, não a um rascunho. */
   overdueOfferActive?: boolean;
   /** O usuário recusou analista nesta mensagem ou na troca anterior: sem nova oferta. */
@@ -126,12 +138,27 @@ export function claimsFalseAction(content: string): boolean {
   return [...content.matchAll(FALSE_ACTION)].some((match) => !isNegated(content, match.index));
 }
 
+/** Chamado em WAITING_EMPLOYEE: o prazo está pausado, então nenhum prazo é citado. */
+export const WAITING_EMPLOYEE_NOTE = "O analista está aguardando a sua resposta, e o prazo fica pausado até lá.";
+const PAUSE_NOTE = "O prazo fica pausado até lá.";
+/** "pausado", "em pausa", "suspenso". "Parado" não conta: pode ser só o chamado parado. */
+const MENTIONS_PAUSE = /(?<!\p{L})(?:paus(?:a|ad[oa])|suspens\p{L}*)(?!\p{L})/iu;
+/** "aguarda a sua resposta", "aguardando seu retorno", "aguardando você": o modelo já disse metade do aviso. */
+const MENTIONS_WAITING = /aguard\p{L}*\s+(?:(?:a\s+|o\s+)?(?:sua\s+|seu\s+)?(?:resposta|retorno)|voc[eê])(?!\p{L})/iu;
+/** Com o prazo pausado não há prazo a citar: data ou "vence" no texto do modelo é invenção. */
+const CITES_DEADLINE = /\d{1,2}\/\d{1,2}|(?<!\p{L})venc\p{L}*/iu;
+
+function waitingOnEmployee(lookup: TicketLookupResult | null): boolean {
+  return lookup?.outcome === "SINGLE_MATCH" && lookup.tickets[0].status === "WAITING_EMPLOYEE";
+}
+
 export function templateFor(lookup: TicketLookupResult | null): string {
   switch (lookup?.outcome) {
     case "SINGLE_MATCH": {
       const [ticket] = lookup.tickets;
       const overdue = ticket.overdue ? ", com o prazo vencido" : "";
-      return `Encontrei o chamado ${ticket.code} (${ticket.title}): status ${ticket.statusLabel}${overdue}.`;
+      const found = `Encontrei o chamado ${ticket.code} (${ticket.title}): status ${ticket.statusLabel}${overdue}.`;
+      return waitingOnEmployee(lookup) ? `${found} ${WAITING_EMPLOYEE_NOTE}` : found;
     }
     case "MULTIPLE_MATCHES":
       return `Encontrei ${lookup.totalMatches} chamados abertos${lookup.tickets.length < lookup.totalMatches ? `; estes são os ${lookup.tickets.length} mais urgentes` : ""}: ${lookup.tickets.map((ticket) => `${ticket.code} (${ticket.statusLabel})`).join(", ")}. Sobre qual deles você quer saber?`;
@@ -216,6 +243,104 @@ export function actionsFrom(
   ];
 }
 
+function articleSearchAction(result: HelpCenterSearchResult): AgentAction {
+  switch (result.outcome) {
+    case "FOUND": {
+      const count = result.articles.length;
+      const titles = result.articles.map(({ title }) => title).join("; ");
+      const found = count === 1 ? "1 artigo encontrado" : `${count} artigos encontrados`;
+      return { tool: SEARCH_HELP_CENTER_TOOL, summary: `Central de ajuda: ${found} (${titles}).`, status: "SUCCESS" };
+    }
+    case "NO_MATCH":
+      return { tool: SEARCH_HELP_CENTER_TOOL, summary: "Central de ajuda: nenhum artigo.", status: "SUCCESS" };
+    case "UNAVAILABLE":
+      return { tool: SEARCH_HELP_CENTER_TOOL, summary: "Central de ajuda indisponível.", status: "ERROR" };
+  }
+}
+
+/** Buscas na central primeiro (vêm antes de abrir chamado), depois as demais execuções. */
+function turnActions({ executions, drafts, handoffs = [], articleSearches = [] }: ReplyInput, handoffDropped = false): AgentAction[] {
+  return [...articleSearches.map(articleSearchAction), ...actionsFrom(executions, drafts, handoffs, handoffDropped)];
+}
+
+export const HELP_QUICK_REPLIES = ["Resolveu, obrigado", "Não resolveu, abrir chamado"];
+export const CITE_ARTICLE_TOOL = "citeArticle";
+const CITATION_DROPPED_SUMMARY = "Citação descartada: o artigo não veio da busca deste turno.";
+const CITATION_CONFLICT_SUMMARY = "Citação descartada: a resposta já tem outra pergunta com respostas rápidas.";
+
+/**
+ * Nota de fonte que o código acrescenta à resposta citada. Fica no texto porque o histórico do turno
+ * seguinte só tem o texto: é por ela que "Não resolveu" sabe qual artigo foi tentado.
+ */
+export function articleNote(title: string): string {
+  return `Fonte: ${title} (central de ajuda).`;
+}
+
+const ARTICLE_NOTE = /(?:^|\s)Fonte: (.{1,200}?) \(central de ajuda\)\.$/u;
+const ANY_ARTICLE_NOTE = /\s*Fonte:[^\n]*?\(central de ajuda\)\.?/giu;
+
+/** Título da nota de fonte no fim de uma resposta do agent, ou null. */
+export function citedArticleIn(content: string): string | null {
+  return ARTICLE_NOTE.exec(content.trim())?.[1] ?? null;
+}
+
+function withoutArticleNote(content: string): string {
+  return content.replace(ANY_ARTICLE_NOTE, "").trim();
+}
+
+const NOT_RESOLVED = /(?<!\p{L})nao\s+(?:resolveu|funcionou|deu\s+certo|ajudou|adiantou)(?!\p{L})/u;
+
+/**
+ * Título do artigo que o usuário disse não ter resolvido, enquanto a abertura do chamado segue
+ * (pergunta de afetados, aviso de parecido). Some com outra resposta ou depois da proposta.
+ */
+export function triedArticleFrom(history: readonly { authorType: string; content: string }[], message: string): string | null {
+  let cited: string | null = null;
+  let tried: string | null = null;
+  for (const { authorType, content } of [...history, { authorType: "EMPLOYEE", content: message }]) {
+    if (authorType === "EMPLOYEE") {
+      if (cited && NOT_RESOLVED.test(normalizeSearchText(content))) tried = cited;
+      cited = null;
+    } else if (authorType === "AGENT") {
+      cited = citedArticleIn(content);
+      const isCreationStep = content === AFFECTED_QUESTION || codesShownAsDuplicates([content]).length > 0;
+      if (cited || !isCreationStep || content.includes(CREATE_PROPOSAL_NOTICE)) tried = null;
+    } else {
+      cited = null;
+      tried = null;
+    }
+  }
+  return tried;
+}
+
+function foundArticles(searches: readonly HelpCenterSearchResult[]): HelpArticle[] {
+  return searches.flatMap((result) => (result.outcome === "FOUND" ? result.articles : []));
+}
+
+/** Só no texto livre aceito: slug devolvido pela busca do turno vira fonte, nota e respostas rápidas. */
+function withCitation(reply: AgentTurnResult, slug: string | null | undefined, searches: readonly HelpCenterSearchResult[]): AgentTurnResult {
+  const content = withoutArticleNote(reply.content);
+  // Só a nota forjada, sem resposta: nada do modelo vai para a tela.
+  if (content === "") {
+    return { ...reply, content: templateFor(reply.ticketLookup), trace: { ...reply.trace, confidence: "LOW", reason: "O modelo respondeu só com uma nota de fonte; resposta padrão usada." }, quickReplies: null };
+  }
+  if (!slug) return { ...reply, content };
+  const skip = (summary: string): AgentTurnResult => ({
+    ...reply,
+    content,
+    trace: { ...reply.trace, actions: [...reply.trace.actions, { tool: CITE_ARTICLE_TOOL, summary, status: "SKIPPED" }] },
+  });
+  const article = foundArticles(searches).find((candidate) => candidate.slug === slug);
+  if (!article) return skip(CITATION_DROPPED_SUMMARY);
+  if (reply.quickReplies) return skip(CITATION_CONFLICT_SUMMARY);
+  return {
+    ...reply,
+    content: `${content} ${articleNote(article.title)}`,
+    trace: { ...reply.trace, sources: [{ kind: "ARTICLE", slug: article.slug, title: article.title }] },
+    quickReplies: HELP_QUICK_REPLIES,
+  };
+}
+
 /** JSON cortado ou em bloco de código não é resposta para o usuário. */
 function usablePlainText(text: string): string {
   const trimmed = text.trim();
@@ -223,7 +348,28 @@ function usablePlainText(text: string): string {
 }
 
 const FALLBACK_UNDERSTOOD = "Mensagem não classificada pelo modelo.";
-const OUT_OF_SCOPE_REPLY = "Só consigo ajudar com suporte de TI e chamados.";
+export const OUT_OF_SCOPE_REPLY = "Só consigo ajudar com suporte de TI e chamados.";
+export const OUT_OF_SCOPE_REDIRECT_TOOL = "outOfScopeRedirect";
+
+/**
+ * Fora de escopo, a resposta nunca é do modelo: ele só escolhe a área, e o código escreve o canal.
+ * Consulta, rascunho e transferência do turno ficam só no trace.
+ */
+function outOfScopeReply(decision: LlmDecision, input: ReplyInput): AgentTurnResult {
+  const area: RedirectArea | null = decision.redirectTo ?? null;
+  const actions = turnActions(input, true);
+  if (area) actions.push({ tool: OUT_OF_SCOPE_REDIRECT_TOOL, summary: redirectSummary(area), status: "SUCCESS" });
+  const trace = traceOf(decision, null, actions);
+  // `understood` e `reason` são do modelo e aparecem na tela: se o texto dele seria barrado, eles também não servem.
+  const rejection = rejectionOf(decision.content, null);
+  return {
+    content: area ? redirectReply(area) : OUT_OF_SCOPE_REPLY,
+    trace: rejection ? { ...trace, understood: FALLBACK_UNDERSTOOD, confidence: "LOW", reason: rejection.reason } : trace,
+    ticketLookup: null,
+    ticketDraft: null,
+    quickReplies: null,
+  };
+}
 
 function traceOf(decision: LlmDecision | null, lookup: TicketLookupResult | null, actions: AgentAction[]): AgentTrace {
   return {
@@ -408,8 +554,18 @@ export function overdueOfferCodeFrom(agentMessages: readonly string[]): string |
   return codes.size === 1 ? ([...codes][0] ?? null) : null;
 }
 
+/** Aguardando o funcionário: o aviso da pausa vem do código, quando o modelo não falou dela. */
+function withWaitingNote(reply: AgentTurnResult): AgentTurnResult {
+  if (!waitingOnEmployee(reply.ticketLookup)) return reply;
+  if (CITES_DEADLINE.test(reply.content)) return { ...reply, content: templateFor(reply.ticketLookup) };
+  if (MENTIONS_PAUSE.test(reply.content)) return reply;
+  const note = MENTIONS_WAITING.test(reply.content) ? PAUSE_NOTE : WAITING_EMPLOYEE_NOTE;
+  return { ...reply, content: `${reply.content} ${note}` };
+}
+
 /** Chamado vencido num único resultado: o agent oferece o analista, não transfere sozinho. */
-function withOverdueOffer(reply: AgentTurnResult, suppress: boolean): AgentTurnResult {
+function withOverdueOffer(base: AgentTurnResult, suppress: boolean): AgentTurnResult {
+  const reply = withWaitingNote(base);
   // A pergunta só pode vir do código: escrita pelo modelo, ela viraria uma oferta falsa no turno seguinte.
   const stripped = reply.content.split(OVERDUE_QUESTION).join("").replace(/\s+/g, " ").trim();
   const lookup = reply.ticketLookup;
@@ -441,7 +597,8 @@ function withoutAnalystPrefix(text: string): string {
 }
 
 /** Null: não há resposta aproveitável, e o runner trata como agent indisponível. */
-export function composeReply({ message, decision, fallbackText, executions, drafts, handoffs = [], overdueOfferActive = false, suppressOverdueOffer = false }: ReplyInput): AgentTurnResult | null {
+export function composeReply(input: ReplyInput): AgentTurnResult | null {
+  const { message, decision, fallbackText, executions, drafts, handoffs = [], articleSearches = [], overdueOfferActive = false, suppressOverdueOffer = false } = input;
   const lastExecution = executions.at(-1) ?? null;
   // Com a oferta como última pergunta, a confirmação é a resposta a ela; um rascunho anterior segue pendente.
   if (isBareConfirmation(message) && !overdueOfferActive) {
@@ -452,7 +609,7 @@ export function composeReply({ message, decision, fallbackText, executions, draf
         understood: "O usuário tentou confirmar por mensagem.",
         // Pode ser complemento ou abertura: o turno não sabe qual rascunho está na tela.
         intent: "OTHER",
-        actions: actionsFrom(executions, drafts, handoffs, true),
+        actions: turnActions(input, true),
         confidence: "HIGH",
         reason: "Confirmação só vale pelo botão; resultados de tools do turno não foram usados.",
       },
@@ -461,13 +618,14 @@ export function composeReply({ message, decision, fallbackText, executions, draf
     };
   }
 
-  const outOfScope = decision?.intent === "OUT_OF_SCOPE";
   // Fora de escopo, a consulta fica só no trace: o modelo às vezes chama a tool e a tela mostraria o seletor.
-  const ticketLookup = outOfScope ? null : lastExecution;
-  const trace = traceOf(decision, lastExecution, actionsFrom(executions, drafts, handoffs, outOfScope));
+  if (decision?.intent === "OUT_OF_SCOPE") return outOfScopeReply(decision, input);
+
+  const ticketLookup = lastExecution;
+  const trace = traceOf(decision, lastExecution, turnActions(input));
 
   // Transferência vale mais que rascunho: o backend descarta o rascunho e move a conversa.
-  const lastHandoff = outOfScope ? undefined : handoffs.at(-1);
+  const lastHandoff = handoffs.at(-1);
   if (lastHandoff?.outcome === "ACCEPTED") {
     return {
       content: HANDOFF_REPLY,
@@ -480,14 +638,14 @@ export function composeReply({ message, decision, fallbackText, executions, draf
   }
 
   // Vale a última execução: um bloqueio depois de uma proposta a cancela.
-  const block = outOfScope ? null : createBlock(drafts.at(-1));
+  const block = createBlock(drafts.at(-1));
   if (block) {
     const blockTrace: AgentTrace = { ...trace, intent: block.intent, reason: block.reason };
     return { content: block.content, trace: blockTrace, ticketLookup, ticketDraft: null, quickReplies: block.quickReplies };
   }
 
   // A proposta é real: o texto vem do código, para nunca prometer mais do que ela.
-  const lastDraft = outOfScope ? undefined : drafts.at(-1);
+  const lastDraft = drafts.at(-1);
   if (lastDraft?.outcome === "DRAFTED") {
     const { proposal } = lastDraft;
     const intent = proposal.kind === "CREATE" ? "OPEN_TICKET" : proposal.kind === "REOPEN" ? "REOPEN" : "COMPLEMENT";
@@ -512,9 +670,12 @@ export function composeReply({ message, decision, fallbackText, executions, draf
   }
 
   const rejection = rejectionOf(draft, ticketLookup);
-  if (rejection === null) return withOverdueOffer({ content: draft, trace, ticketLookup, ticketDraft: null }, suppressOverdueOffer);
+  if (rejection === null) {
+    const reply = withOverdueOffer({ content: draft, trace, ticketLookup, ticketDraft: null }, suppressOverdueOffer);
+    return withCitation(reply, decision?.articleSlug, articleSearches);
+  }
   return {
-    content: outOfScope ? OUT_OF_SCOPE_REPLY : rejection.content,
+    content: rejection.content,
     // `understood` pode repetir o que foi rejeitado, como um chamado inventado.
     trace: { ...trace, understood: FALLBACK_UNDERSTOOD, confidence: "LOW", reason: rejection.reason },
     ticketLookup,

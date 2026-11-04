@@ -22,6 +22,8 @@ const t = (
   title: code,
   createdAt,
   resolvedAt,
+  dueAt: null,
+  overdue: false,
 });
 
 describe("campos de chamado do console", () => {

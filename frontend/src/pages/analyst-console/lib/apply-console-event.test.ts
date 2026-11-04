@@ -2,6 +2,7 @@ import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { consoleConversationKeys } from "@/entities/conversation";
 import { consoleMessagesKey } from "@/entities/message";
+import { consoleTicketKeys } from "@/entities/ticket";
 import { applyConsoleEvent } from "./apply-console-event";
 
 const client = () => new QueryClient();
@@ -34,9 +35,11 @@ const message = {
   content: "Rafael assumiu a conversa",
   createdAt: "2026-11-03T10:12:00.000Z",
   trace: null,
+  systemKind: "TAKEOVER",
 };
 
-const ticketsKey = ["console", "tickets", "c1"] as const;
+const ticketsKey = consoleTicketKeys.byConversation("c1");
+const detailKey = consoleTicketKeys.detail("INC-20405");
 
 function seeded() {
   const qc = client();
@@ -45,6 +48,7 @@ function seeded() {
   ]);
   qc.setQueryData(consoleMessagesKey("c1"), []);
   qc.setQueryData(ticketsKey, { conversationTicket: null, otherTickets: [] });
+  qc.setQueryData(detailKey, { code: "INC-20405" });
   return qc;
 }
 
@@ -96,6 +100,27 @@ describe("applyConsoleEvent", () => {
 
     expect(invalidated(qc, ticketsKey)).toBe(true);
     expect(invalidated(qc, consoleConversationKeys.list())).toBe(false);
+  });
+
+  it("tickets.changed sem conversa invalida também o detalhe do chamado", () => {
+    const qc = seeded();
+
+    applyConsoleEvent(qc, "tickets.changed", {
+      conversationId: null,
+      ownerId: "u1",
+      ticketCode: "INC-20405",
+    });
+
+    expect(invalidated(qc, detailKey)).toBe(true);
+    expect(invalidated(qc, ticketsKey)).toBe(true);
+  });
+
+  it("tickets.changed fora do formato ainda invalida os chamados", () => {
+    const qc = seeded();
+
+    applyConsoleEvent(qc, "tickets.changed", { algo: 1 });
+
+    expect(invalidated(qc, detailKey)).toBe(true);
   });
 
   it("ignora evento fora do schema ou desconhecido", () => {

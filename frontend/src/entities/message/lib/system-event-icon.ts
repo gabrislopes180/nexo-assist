@@ -1,12 +1,19 @@
-export type SystemEventIcon = "transfer" | "takeover";
+import type { SystemKind } from "../model/timeline-message";
 
-// Depende dos textos SYSTEM do backend; texto desconhecido fica sem ícone.
-const TRANSFER_TEXT = "Transferida para um analista";
-const TAKEOVER_SUFFIX = "assumiu a conversa";
+/** Ícones do design system: `arrow-right-left`, `headset` e `bot` (devolver ao agent). */
+export type SystemEventIcon = "transfer" | "takeover" | "return";
 
-/** Ícone do marco: transferência ou analista assumindo. Compartilhado pelo chat e pelo console. */
-export function systemEventIcon(content: string): SystemEventIcon | null {
-  if (content === TRANSFER_TEXT) return "transfer";
-  if (content.endsWith(TAKEOVER_SUFFIX)) return "takeover";
-  return null;
+// Encerramento fica sem ícone: o design system não tem um com esse significado.
+const ICON_BY_KIND = {
+  HANDOFF: "transfer",
+  TAKEOVER: "takeover",
+  RETURNED: "return",
+  CLOSED: null,
+} as const satisfies Record<SystemKind, SystemEventIcon | null>;
+
+/** Ícone do marco pelo `systemKind`; o texto é só para exibir. Compartilhado pelo chat e pelo console. */
+export function systemEventIcon(
+  systemKind: SystemKind | null,
+): SystemEventIcon | null {
+  return systemKind === null ? null : ICON_BY_KIND[systemKind];
 }

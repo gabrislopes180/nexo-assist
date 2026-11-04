@@ -1,10 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/shared/api/http-client";
-import { CONSOLE_QUERY_ROOT } from "@/shared/api/query-keys";
 import { conversationTicketsResponseSchema } from "../model/console-ticket";
-
-export const conversationTicketsKey = (id: string) =>
-  [...CONSOLE_QUERY_ROOT, "tickets", id] as const;
+import { consoleTicketKeys } from "./console-ticket-keys";
 
 export function getConversationTickets(id: string) {
   return apiRequest(
@@ -15,7 +12,7 @@ export function getConversationTickets(id: string) {
 
 export function useConversationTickets(id: string) {
   return useQuery({
-    queryKey: conversationTicketsKey(id),
+    queryKey: consoleTicketKeys.byConversation(id),
     queryFn: () => getConversationTickets(id),
   });
 }

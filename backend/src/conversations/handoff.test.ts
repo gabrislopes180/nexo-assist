@@ -52,8 +52,8 @@ describe("transferência no completeTurn", () => {
     assert.equal(stored.conversationStatus, "WAITING_ANALYST");
     const conversation = await conversationOf(turn.conversationId);
     assert.deepEqual(
-      stored.systemMessages.map((m) => [m.id, m.conversationId, m.authorType, m.author, m.content, m.createdAt, m.trace]),
-      [[conversation.messages[2]?.id, turn.conversationId, "SYSTEM", null, HANDOFF_SYSTEM_MESSAGE, new Date(T1.getTime() + 1), null]],
+      stored.systemMessages.map((m) => [m.id, m.conversationId, m.authorType, m.systemKind, m.author, m.content, m.createdAt, m.trace]),
+      [[conversation.messages[2]?.id, turn.conversationId, "SYSTEM", "HANDOFF", null, HANDOFF_SYSTEM_MESSAGE, new Date(T1.getTime() + 1), null]],
     );
     assert.equal(conversation.status, "WAITING_ANALYST");
     assert.equal(conversation.handoffReason, "EMPLOYEE_REQUEST");
@@ -68,6 +68,7 @@ describe("transferência no completeTurn", () => {
     ]);
     const system = conversation.messages[2];
     assert.equal(system?.authorId, null);
+    assert.equal(system?.systemKind, "HANDOFF");
     assert.equal(system?.trace, null);
     assert.ok((system?.createdAt.getTime() ?? 0) > (conversation.messages[1]?.createdAt.getTime() ?? 0));
     assert.deepEqual(conversation.lastMessageAt, system?.createdAt);

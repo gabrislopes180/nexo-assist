@@ -216,3 +216,52 @@ describe("draftTicket", () => {
     assert.equal(draftTicketInputSchema.safeParse({ ...base, dueAt: "2026-11-02" }).success, false);
   });
 });
+
+describe("draftTicket depois de artigo que não resolveu", () => {
+  function contextWithTried(triedArticle: string | null, recorder: TurnRecorder) {
+    const context = contextOf({ recorder });
+    context.set("triedArticle", triedArticle);
+    return context;
+  }
+
+  it("acrescenta 'Já tentou: <título>.' à descrição", async () => {
+    const { ticketService } = fakeReader();
+    const recorder = createTurnRecorder();
+    await run(ticketService, { ...base, affectedScope: "INDIVIDUAL" }, contextWithTried("VPN com erro 809", recorder));
+    assert.equal(proposalOf(recorder)?.description, "Erro 809 ao conectar na VPN.\n\nJá tentou: VPN com erro 809.");
+  });
+
+  it("não repete se o modelo já escreveu", async () => {
+    const { ticketService } = fakeReader();
+    const recorder = createTurnRecorder();
+    const description = "Erro 809. Já tentou: VPN com erro 809.";
+    await run(ticketService, { ...base, description, affectedScope: "INDIVIDUAL" }, contextWithTried("VPN com erro 809", recorder));
+    assert.equal(proposalOf(recorder)?.description, description);
+  });
+
+  it("não repete se o modelo escreveu com outra caixa", async () => {
+    const { ticketService } = fakeReader();
+    const recorder = createTurnRecorder();
+    const description = "Erro 809. já tentou: VPN com erro 809.";
+    await run(ticketService, { ...base, description, affectedScope: "INDIVIDUAL" }, contextWithTried("VPN com erro 809", recorder));
+    assert.equal(proposalOf(recorder)?.description, description);
+  });
+
+  it("descrição no limite: corta o corpo uma vez e mantém as duas linhas", async () => {
+    const { ticketService } = fakeReader();
+    const recorder = createTurnRecorder();
+    const context = contextWithTried("VPN com erro 809", recorder);
+    context.set("relatedCode", "INC-19987");
+    await run(ticketService, { ...base, description: "x".repeat(2000), affectedScope: "INDIVIDUAL" }, context);
+    const description = proposalOf(recorder)?.description ?? "";
+    assert.equal(description.length <= 2000, true);
+    assert.match(description, /\n\nRelacionado ao INC-19987\.\n\nJá tentou: VPN com erro 809\.$/);
+  });
+
+  it("sem artigo tentado, a descrição fica como veio", async () => {
+    const { ticketService } = fakeReader();
+    const recorder = createTurnRecorder();
+    await run(ticketService, { ...base, affectedScope: "INDIVIDUAL" }, contextWithTried(null, recorder));
+    assert.equal(proposalOf(recorder)?.description, base.description);
+  });
+});

@@ -1,15 +1,29 @@
 import { z } from "zod";
-import type { ConversationStatus, HandoffReason, TicketCategory, TicketPriority, TicketStatus, TicketType } from "../generated/prisma/enums.js";
+import type {
+  ConversationStatus,
+  HandoffReason,
+  SystemMessageKind,
+  TicketCategory,
+  TicketPriority,
+  TicketStatus,
+  TicketType,
+} from "../generated/prisma/enums.js";
 import type { Person } from "./chat.js";
 import { boundedText } from "./conversation-draft.js";
 import type { AgentTrace } from "./transparency.js";
 
-export type { Person };
+export type { Person, SystemMessageKind };
 
 /** Mensagem da linha do tempo, igual para o console, o chat do funcionário e o SSE. */
 export type TimelineMessageView = {
   id: string;
   authorType: "EMPLOYEE" | "AGENT" | "ANALYST" | "SYSTEM";
+  /**
+   * Qual aviso é a mensagem SYSTEM: HANDOFF (transferida para a fila), TAKEOVER (um analista
+   * assumiu), RETURNED (devolvida ao agent) ou CLOSED (atendimento encerrado). Null nas demais.
+   * Gravado junto com a mensagem; use este campo, nunca o texto de `content`.
+   */
+  systemKind: SystemMessageKind | null;
   /** EMPLOYEE = dono, ANALYST = analista; AGENT e SYSTEM = null. */
   author: Person | null;
   content: string;
@@ -50,6 +64,10 @@ export type ConsoleTicket = {
   title: string;
   createdAt: string;
   resolvedAt: string | null;
+  /** Prazo atual; null em WAITING_EMPLOYEE (pausado) e RESOLVED. */
+  dueAt: string | null;
+  /** dueAt < agora. */
+  overdue: boolean;
 };
 
 export type ConsoleTickets = { conversationTicket: ConsoleTicket | null; otherTickets: ConsoleTicket[] };

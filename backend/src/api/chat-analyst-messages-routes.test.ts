@@ -9,7 +9,7 @@ import { issueSessionToken } from "../auth/session-token.js";
 import type { AgentRunner, AgentTurnInput } from "../chat/agent-runner.js";
 import { createChatService } from "../chat/chat-service.js";
 import { createConversationQueries } from "../conversations/conversation-queries.js";
-import { createConversationService } from "../conversations/conversation-service.js";
+import { createConversationService, type ConversationService } from "../conversations/conversation-service.js";
 import { createTestDatabase } from "../db/test-database.js";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus } from "../generated/prisma/enums.js";
@@ -17,7 +17,7 @@ import type { ChatResponse } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
 import { createTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
-import { unusedConsoleService } from "./test-support.js";
+import { unusedConsoleService, unusedConsoleTicketService, unusedKnowledgeService } from "./test-support.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -32,6 +32,7 @@ describe("mensagens do funcionário com a conversa no analista", () => {
   let ownerId: string;
   let analystId: string;
   const inputs: AgentTurnInput[] = [];
+  let conversations: ConversationService;
 
   function post(payload: unknown): Promise<Response> {
     return fetch(`${url}/chat`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(payload) });
@@ -54,8 +55,9 @@ describe("mensagens do funcionário com a conversa no analista", () => {
         return Promise.resolve({ content: "Resposta do agent.", trace: TRACE, ticketLookup: null });
       },
     };
-    const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets: createTicketService(client) });
-    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
+    conversations = createConversationService(client);
+    const chatService = createChatService({ queries: createConversationQueries(client), conversations, agentRunner, tickets: createTicketService(client) });
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService, consoleTicketService: unusedConsoleTicketService, knowledgeService: unusedKnowledgeService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
@@ -85,23 +87,24 @@ describe("mensagens do funcionário com a conversa no analista", () => {
       assert.equal(body.employeeMessage.authorType, "EMPLOYEE");
       assert.equal(body.employeeMessage.content, "Alguém aí?");
       assert.equal(body.conversation.status, status);
-      assert.equal(body.conversation.messageCount, 3);
+      assert.equal(body.conversation.messageCount, 2);
+      assert.equal(body.conversation.remainingMessages, 28);
       assert.deepEqual(body.conversation.analyst, status === "WITH_ANALYST" ? { id: analystId, name: "Bruno Martins" } : null);
 
       const stored = await client.message.findUniqueOrThrow({ where: { id: body.employeeMessage.id } });
       assert.equal(stored.authorType, "EMPLOYEE");
       assert.equal(stored.authorId, ownerId);
       const conversation = await client.conversation.findUniqueOrThrow({ where: { id } });
-      assert.equal(conversation.messageCount, 3);
+      assert.equal(conversation.messageCount, 2);
       assert.deepEqual(conversation.lastMessageAt, stored.createdAt);
     });
   }
 
-  it("com o analista, aceita além do limite de 30", async () => {
+  it("com o analista, aceita com o limite de 30 atingido, sem contar a mensagem", async () => {
     const { id } = await createConversation("WITH_ANALYST", 30);
     const res = await post({ message: "mais uma", conversationId: id });
     assert.equal(res.status, 200);
-    assert.equal(((await res.json()) as ChatResponse).conversation.messageCount, 31);
+    assert.equal(((await res.json()) as ChatResponse).conversation.messageCount, 30);
   });
 
   it("em CLOSED continua 409 CONVERSATION_CLOSED", async () => {
@@ -119,6 +122,21 @@ describe("mensagens do funcionário com a conversa no analista", () => {
     assert.equal(inputs.length, 1);
     assert.equal(inputs[0]?.returnedFromAnalyst, true);
   });
+
+  for (const [label, assumed, expected] of [
+    ["devolvida sem ninguém assumir, o agent volta ao normal", false, false],
+    ["devolvida por quem assumiu, o agent entra no modo devolvido", true, true],
+  ] as const) {
+    it(label, async () => {
+      const { id } = await createConversation("WAITING_ANALYST");
+      const analyst = { id: analystId, name: "Bruno Martins" };
+      if (assumed) await conversations.takeOver(id, analyst, T0);
+      await conversations.returnToAgent(id, analyst, T0);
+      await post({ message: "voltei", conversationId: id });
+      assert.equal(inputs.length, 1);
+      assert.equal(inputs[0]?.returnedFromAnalyst, expected);
+    });
+  }
 
   it("turno com o agent em conversa nunca devolvida passa returnedFromAnalyst false e devolve employeeMessage", async () => {
     const body = (await (await post({ message: "oi" })).json()) as ChatResponse;

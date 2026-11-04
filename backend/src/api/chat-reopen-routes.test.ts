@@ -17,7 +17,7 @@ import type { AgentTrace } from "../shared/transparency.js";
 import { computeDueAt } from "../tickets/sla.js";
 import { createTicketService, TicketServiceUnavailableError, type FullTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
-import { unusedConsoleService } from "./test-support.js";
+import { unusedConsoleService, unusedConsoleTicketService, unusedKnowledgeService } from "./test-support.js";
 
 /** Turno com o agent: a resposta do agent está sempre presente. */
 type AgentChatResponse = ChatResponse & { message: NonNullable<ChatResponse["message"]> };
@@ -132,7 +132,7 @@ describe("rotas de reabertura", () => {
       },
     };
     const chatService = createChatService({ queries: createConversationQueries(client), conversations: createConversationService(client), agentRunner, tickets });
-    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService }).listen(0);
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService: unusedConsoleService, consoleTicketService: unusedConsoleTicketService, knowledgeService: unusedKnowledgeService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });

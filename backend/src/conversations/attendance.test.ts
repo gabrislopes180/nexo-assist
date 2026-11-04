@@ -80,7 +80,8 @@ describe("transições de atendimento", () => {
       assert.deepEqual(snapshot.analyst, bruno);
       assert.deepEqual(snapshot.assignedAt, T1);
       assert.equal(snapshot.owner.name, "Ana Souza");
-      assert.deepEqual(createdMessages.map((m) => [m.authorType, m.content, m.author]), [["SYSTEM", "Bruno assumiu a conversa", null]]);
+      assert.deepEqual(createdMessages.map((m) => [m.authorType, m.systemKind, m.content, m.author]), [["SYSTEM", "TAKEOVER", "Bruno assumiu a conversa", null]]);
+      assert.equal((await systemsOf(id))[0]?.systemKind, "TAKEOVER");
       assert.deepEqual(createdMessages[0]?.createdAt, T1);
 
       const stored = await read(id);
@@ -137,6 +138,7 @@ describe("transições de atendimento", () => {
       assert.deepEqual(message.author, bruno);
       assert.equal(message.trace, null);
       assert.deepEqual(createdMessages, [message]);
+      assert.equal(message.systemKind, null);
       assert.equal(snapshot.messageCount, 3);
       const stored = await client.message.findUniqueOrThrow({ where: { id: message.id } });
       assert.equal(stored.authorId, bruno.id);
@@ -153,16 +155,17 @@ describe("transições de atendimento", () => {
   });
 
   describe("returnToAgent", () => {
-    for (const [label, status, analyst] of [
-      ["em espera, sem assumir", "WAITING_ANALYST", null],
-      ["assumida por mim", "WITH_ANALYST", "me"],
+    for (const [label, status, analyst, returnedToAgentAt] of [
+      ["em espera, sem assumir", "WAITING_ANALYST", null, null],
+      ["assumida por mim", "WITH_ANALYST", "me", T1],
     ] as const) {
       it(`devolve conversa ${label}, limpando analista e transferência`, async () => {
         const { id } = await createConversation(status, analyst ? bruno.id : null);
         const { snapshot, createdMessages } = await service.returnToAgent(id, bruno, T1);
         assert.equal(snapshot.status, "WITH_AGENT");
         assert.equal(snapshot.analyst, null);
-        assert.deepEqual(createdMessages.map((m) => m.content), [RETURN_SYSTEM_MESSAGE]);
+        assert.deepEqual(createdMessages.map((m) => [m.systemKind, m.content]), [["RETURNED", RETURN_SYSTEM_MESSAGE]]);
+        assert.equal((await systemsOf(id))[0]?.systemKind, "RETURNED");
         const stored = await read(id);
         assert.equal(stored.analystId, null);
         assert.equal(stored.assignedAt, null);
@@ -170,10 +173,19 @@ describe("transições de atendimento", () => {
         assert.equal(stored.handoffSummary, null);
         assert.equal(stored.handoffAt, null);
         assert.equal(stored.pendingDraftId, null);
-        assert.deepEqual(stored.returnedToAgentAt, T1);
+        assert.deepEqual(stored.returnedToAgentAt, returnedToAgentAt);
         assert.deepEqual(stored.lastMessageAt, T1);
       });
     }
+
+    it("sem ninguém assumir, não liga o modo devolvido nem apaga uma devolução anterior", async () => {
+      const { id } = await createConversation();
+      await client.conversation.update({ where: { id }, data: { returnedToAgentAt: T0 } });
+      const { snapshot, createdMessages } = await service.returnToAgent(id, bruno, T1);
+      assert.deepEqual(snapshot.returnedToAgentAt, T0);
+      assert.deepEqual(createdMessages.map((m) => [m.authorType, m.content]), [["SYSTEM", RETURN_SYSTEM_MESSAGE]]);
+      assert.deepEqual((await read(id)).returnedToAgentAt, T0);
+    });
 
     it("recusa conversa de outro analista, já com o agent e encerrada", async () => {
       for (const [status, analystId] of [["WITH_ANALYST", rafael.id], ["WITH_AGENT", null], ["CLOSED", null]] as const) {
@@ -196,7 +208,8 @@ describe("transições de atendimento", () => {
       const { snapshot, createdMessages } = await service.closeAttendance(id, bruno, T1);
       assert.equal(snapshot.status, "CLOSED");
       assert.deepEqual(snapshot.closedAt, T1);
-      assert.deepEqual(createdMessages.map((m) => m.content), ["Bruno encerrou o atendimento"]);
+      assert.deepEqual(createdMessages.map((m) => [m.systemKind, m.content]), [["CLOSED", "Bruno encerrou o atendimento"]]);
+      assert.equal((await systemsOf(id))[0]?.systemKind, "CLOSED");
       const stored = await read(id);
       assert.equal(stored.analystId, bruno.id);
       assert.deepEqual(stored.assignedAt, T0);

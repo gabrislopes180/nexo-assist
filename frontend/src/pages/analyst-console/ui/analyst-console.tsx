@@ -109,7 +109,9 @@ export function AnalystConsole() {
       )}
       {conversation && showInlinePanel ? (
         <TicketPanel
+          key={conversation.id}
           conversation={conversation}
+          now={now}
           onClose={() => setPanelDismissed(true)}
         />
       ) : null}
@@ -125,7 +127,9 @@ export function AnalystConsole() {
               Chamados de {conversation.owner.name}
             </SheetTitle>
             <TicketPanel
+              key={conversation.id}
               conversation={conversation}
+              now={now}
               onClose={() => setSheetOpen(false)}
             />
           </SheetContent>

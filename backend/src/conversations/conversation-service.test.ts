@@ -124,7 +124,7 @@ describe("ConversationService", () => {
     });
 
     for (const status of ["WAITING_ANALYST", "WITH_ANALYST"] as const) {
-      it(`em ${status} grava a mensagem para o analista, sem turno do agent`, async () => {
+      it(`em ${status} grava a mensagem para o analista, sem turno do agent e sem contar na cota`, async () => {
         const { id } = await createConversation({ status, messageCount: 2 });
         const start = await service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 });
         assert.equal(start.kind, "STORED_FOR_ANALYST");
@@ -133,16 +133,24 @@ describe("ConversationService", () => {
         assert.equal(start.employeeMessage.author?.id, ownerId);
         assert.deepEqual(start.employeeMessage.createdAt, T1);
         assert.equal(start.conversation.status, status);
-        assert.equal(start.conversation.messageCount, 3);
-        assert.deepEqual(await snapshot(id), { messageCount: 3, lastMessageAt: T1, status, messages: 1 });
+        assert.equal(start.conversation.messageCount, 2);
+        assert.deepEqual(await snapshot(id), { messageCount: 2, lastMessageAt: T1, status, messages: 1 });
       });
     }
 
-    it("com o analista, aceita além do limite de 30", async () => {
+    it("com o analista, aceita com o limite de 30 atingido, sem passar de 30", async () => {
       const { id } = await createConversation({ status: "WITH_ANALYST", messageCount: 30 });
       const start = await service.startTurn(ownerId, { conversationId: id, content: "x", now: T1 });
       assert.ok(start.kind === "STORED_FOR_ANALYST");
-      assert.equal(start.conversation.messageCount, 31);
+      assert.equal(start.conversation.messageCount, 30);
+    });
+
+    it("mensagens ao analista não gastam a cota: devolvida ao agent, o turno seguinte é aceito", async () => {
+      const { id } = await createConversation({ status: "WITH_ANALYST", messageCount: 29 });
+      for (let i = 0; i < 3; i++) await service.startTurn(ownerId, { conversationId: id, content: `ao analista ${i}`, now: T1 });
+      await client.conversation.update({ where: { id }, data: { status: "WITH_AGENT" } });
+      const turn = await startAgentTurn(service, ownerId, { conversationId: id, content: "de volta ao agent", now: T1 });
+      assert.equal(turn.messageCount, 30);
     });
 
     it("conversa devolvida ao agent volta a ser turno do agent, com returnedToAgentAt na reserva", async () => {

@@ -31,7 +31,7 @@ export async function transferToAnalyst(
   });
   if (count === 0) throw new ConversationNotWithAgentError();
   const message = await tx.message.create({
-    data: { conversationId, authorType: "SYSTEM", authorId: null, content: HANDOFF_SYSTEM_MESSAGE, createdAt: systemAt },
+    data: { conversationId, authorType: "SYSTEM", systemKind: "HANDOFF", authorId: null, content: HANDOFF_SYSTEM_MESSAGE, createdAt: systemAt },
     select: timelineMessageSelect,
   });
   return toTimelineMessage(message);

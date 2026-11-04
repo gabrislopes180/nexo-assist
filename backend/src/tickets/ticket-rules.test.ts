@@ -9,12 +9,15 @@ import {
   TICKET_PRIORITY_LABEL,
   TICKET_STATUS_LABEL,
   TICKET_TYPE_LABEL,
+  STATUS_NOTE_REQUIRED,
+  allowedAnalystStatuses,
   applyTicketEvent,
   canReopen,
   capPriority,
   canTransition,
   initialTimeline,
   isOpen,
+  requiresStatusNote,
   type TicketEventInput,
   type TicketTimeline,
 } from "./ticket-rules.js";
@@ -402,5 +405,41 @@ describe("capPriority", () => {
     for (const priority of ["HIGH", "MEDIUM", "LOW"] as const) {
       assert.equal(capPriority(priority, "INDIVIDUAL"), priority);
     }
+  });
+});
+
+describe("allowedAnalystStatuses", () => {
+  it("segue a matriz do analista, com APPROVED só em REQ", () => {
+    assert.deepEqual(allowedAnalystStatuses("REQ", "WAITING_ANALYST"), ["IN_PROGRESS", "WAITING_EMPLOYEE", "APPROVED", "RESOLVED"]);
+    assert.deepEqual(allowedAnalystStatuses("INC", "WAITING_ANALYST"), ["IN_PROGRESS", "WAITING_EMPLOYEE", "RESOLVED"]);
+    assert.deepEqual(allowedAnalystStatuses("REQ", "IN_PROGRESS"), ["WAITING_EMPLOYEE", "APPROVED", "RESOLVED"]);
+    assert.deepEqual(allowedAnalystStatuses("REQ", "WAITING_EMPLOYEE"), ["IN_PROGRESS", "RESOLVED"]);
+    assert.deepEqual(allowedAnalystStatuses("REQ", "APPROVED"), ["IN_PROGRESS", "WAITING_EMPLOYEE", "RESOLVED"]);
+  });
+
+  it("RESOLVED não oferece nenhuma transição (só o funcionário reabre)", () => {
+    assert.deepEqual(allowedAnalystStatuses("INC", "RESOLVED"), []);
+    assert.deepEqual(allowedAnalystStatuses("REQ", "RESOLVED"), []);
+  });
+
+  it("concorda com canTransition em todas as combinações", () => {
+    const statuses = ["WAITING_ANALYST", "IN_PROGRESS", "WAITING_EMPLOYEE", "APPROVED", "RESOLVED"] as const;
+    for (const type of ["INC", "REQ"] as const) {
+      for (const from of statuses) {
+        const allowed = allowedAnalystStatuses(type, from);
+        for (const to of statuses) assert.equal(allowed.includes(to), canTransition(type, from, to, "ANALYST"), `${type} ${from} -> ${to}`);
+      }
+    }
+  });
+});
+
+describe("requiresStatusNote", () => {
+  it("exige nota só para WAITING_EMPLOYEE e RESOLVED", () => {
+    assert.equal(requiresStatusNote("WAITING_EMPLOYEE"), true);
+    assert.equal(requiresStatusNote("RESOLVED"), true);
+    assert.equal(requiresStatusNote("IN_PROGRESS"), false);
+    assert.equal(requiresStatusNote("APPROVED"), false);
+    assert.equal(requiresStatusNote("WAITING_ANALYST"), false);
+    assert.deepEqual([...STATUS_NOTE_REQUIRED], ["WAITING_EMPLOYEE", "RESOLVED"]);
   });
 });

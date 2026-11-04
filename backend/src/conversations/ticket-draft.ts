@@ -21,6 +21,7 @@ import {
   TICKET_CATEGORY_LABEL,
   TICKET_PRIORITY_LABEL,
   TICKET_STATUS_LABEL,
+  type TicketTimeline,
 } from "../tickets/ticket-rules.js";
 import { isOpenTicket, matchableTicketSelect } from "../tickets/ticket-service.js";
 import { ConversationNotWithAgentError } from "./conversation-rules.js";
@@ -131,8 +132,47 @@ async function addComplement({ tx, ownerId, conversationId, now }: TurnScope, co
       createdAt: at,
     },
   });
-  await tx.ticket.update({ where: { id: ticket.id }, data: { updatedAt: next.updatedAt } });
-  return toTicketSummary(ticket, now);
+  const returned = ticket.status === "WAITING_EMPLOYEE" ? await returnToAnalystQueue(tx, { ...ticket, ...next }, conversationId, at) : null;
+  if (!returned) {
+    await tx.ticket.update({ where: { id: ticket.id }, data: { updatedAt: next.updatedAt } });
+    return toTicketSummary(ticket, now);
+  }
+  const summary = { ...ticket, status: returned.status, dueAt: returned.dueAt };
+  if (!isOpenTicket(summary)) throw new Error("Chamado devolvido fora do estado esperado");
+  return toTicketSummary(summary, now);
+}
+
+/**
+ * O funcionário respondeu um chamado que esperava por ele: o sistema devolve à fila do analista
+ * (STATUS_CHANGED SYSTEM, janela nova). Condicional: se um analista mudou o status nesta corrida,
+ * a transação dele vence e nada é devolvido (null).
+ */
+async function returnToAnalystQueue(
+  tx: DraftTransaction,
+  ticket: TicketTimeline & { id: string },
+  conversationId: string,
+  at: Date,
+): Promise<TicketTimeline | null> {
+  const { next, eventDueAt, fromStatus } = applyTicketEvent(ticket, { type: "STATUS_CHANGED", actorType: "SYSTEM", at, toStatus: "WAITING_ANALYST" }, at);
+  const { count } = await tx.ticket.updateMany({
+    where: { id: ticket.id, status: "WAITING_EMPLOYEE" },
+    data: { status: next.status, slaStartedAt: next.slaStartedAt, dueAt: next.dueAt, updatedAt: next.updatedAt },
+  });
+  if (count === 0) return null;
+  await tx.ticketEvent.create({
+    data: {
+      ticketId: ticket.id,
+      type: "STATUS_CHANGED",
+      actorType: "SYSTEM",
+      actorId: null,
+      fromStatus,
+      toStatus: next.status,
+      dueAt: eventDueAt,
+      conversationId,
+      createdAt: at,
+    },
+  });
+  return next;
 }
 
 async function confirmComplement(scope: TurnScope, draft: ComplementDraft, content: string): Promise<Omit<ConfirmedDraft, "conversation" | "systemMessages">> {

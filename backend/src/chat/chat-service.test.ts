@@ -22,6 +22,7 @@ const employeeMessage = {
   id: "m1",
   conversationId: "c1",
   authorType: "EMPLOYEE",
+  systemKind: null,
   author: { id: "u1", name: "Pessoa" },
   content: "oi",
   createdAt: NOW,
@@ -381,7 +382,7 @@ describe("ChatService.getConversation", () => {
       analyst: { id: "a1", name: "Bruno Martins" },
     });
     assert.deepEqual(view.messages, [
-      { id: "m1", authorType: "EMPLOYEE", author: { id: "u1", name: "Pessoa" }, content: "oi", createdAt: NOW.toISOString(), trace: null },
+      { id: "m1", authorType: "EMPLOYEE", systemKind: null, author: { id: "u1", name: "Pessoa" }, content: "oi", createdAt: NOW.toISOString(), trace: null },
     ]);
   });
 });

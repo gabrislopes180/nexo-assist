@@ -1,7 +1,7 @@
 import { closeSystemMessage, RETURN_SYSTEM_MESSAGE, takeoverSystemMessage } from "../conversations/attendance.js";
 import { CONVERSATION_MESSAGE_LIMIT } from "../conversations/conversation-rules.js";
 import { HANDOFF_SYSTEM_MESSAGE } from "../conversations/handoff.js";
-import type { TicketType } from "../generated/prisma/enums.js";
+import type { SystemMessageKind, TicketType } from "../generated/prisma/enums.js";
 import { normalizeSearchText } from "../knowledge/search-text.js";
 import { agentTraceSchema } from "../shared/transparency.js";
 import { isOverdue } from "../tickets/sla.js";
@@ -14,7 +14,7 @@ import {
 } from "../tickets/ticket-rules.js";
 import { prisma, type DbTransaction } from "./prisma.js";
 import { ARTICLES } from "./seed-data/articles.js";
-import { buildConversations, NEAR_LIMIT_CONVERSATION_ID, type ConversationKey } from "./seed-data/conversations.js";
+import { agentQuotaUsed, buildConversations, NEAR_LIMIT_CONVERSATION_ID, type ConversationKey } from "./seed-data/conversations.js";
 import { buildTickets, type TicketSeed } from "./seed-data/tickets.js";
 import { USERS, type UserKey } from "./seed-data/users.js";
 
@@ -150,7 +150,7 @@ async function seed(tx: DbTransaction, now: Date) {
         closedAt: c.closedAt ?? null,
         assignedAt: c.assignedAt ?? null,
         returnedToAgentAt: c.returnedToAgentAt ?? null,
-        messageCount: c.messages.filter((m) => m.authorType === "EMPLOYEE").length,
+        messageCount: agentQuotaUsed(c.messages),
         pendingDraft: undefined, // null no banco
         pendingDraftId: null,
         lastMessageAt: last.at,
@@ -162,6 +162,7 @@ async function seed(tx: DbTransaction, now: Date) {
             authorId: idOf(m.authorKey),
             content: m.content,
             trace: m.trace,
+            systemKind: m.systemKind ?? null,
             createdAt: m.at,
           })),
         },
@@ -266,6 +267,15 @@ async function verify(tx: DbTransaction, now: Date) {
     if (t.status === "WAITING_EMPLOYEE") check(t.dueAt === null, `${t.code}: WAITING_EMPLOYEE com prazo`);
   }
 
+  const roles = new Map((await tx.user.findMany({ select: { id: true, role: true } })).map((u) => [u.id, u.role] as const));
+  for (const t of tickets) {
+    for (const e of t.events) {
+      if (e.actorType === "ANALYST") check(e.actorId !== null && roles.get(e.actorId) === "ANALYST", `${t.code}: evento ${e.type} de ANALYST sem autor analista`);
+      if (e.actorType === "EMPLOYEE") check(e.actorId === t.ownerId, `${t.code}: evento ${e.type} de EMPLOYEE que não é do dono`);
+      if (e.actorType === "AGENT" || e.actorType === "SYSTEM") check(e.actorId === null, `${t.code}: evento ${e.type} de ${e.actorType} com autor`);
+    }
+  }
+
   const byCode = new Map(tickets.map((t) => [t.code, t] as const));
   const ticket = (code: string) => {
     const t = byCode.get(code);
@@ -281,8 +291,8 @@ async function verify(tx: DbTransaction, now: Date) {
 
   const conversations = await tx.conversation.findMany({ include: { messages: { orderBy: { createdAt: "asc" } } } });
   for (const c of conversations) {
-    const employeeMessages = c.messages.filter((m) => m.authorType === "EMPLOYEE").length;
-    check(c.messageCount === employeeMessages, `conversa ${c.id}: messageCount ${c.messageCount} ≠ ${employeeMessages}`);
+    const quota = agentQuotaUsed(c.messages);
+    check(c.messageCount === quota, `conversa ${c.id}: messageCount ${c.messageCount} ≠ ${quota} (mensagens ao agent)`);
     const last = c.messages[c.messages.length - 1];
     check(last !== undefined && sameTime(c.lastMessageAt, last.createdAt), `conversa ${c.id}: lastMessageAt divergente`);
     check(c.pendingDraft === null, `conversa ${c.id}: pendingDraft deveria ser null`);
@@ -294,19 +304,20 @@ async function verify(tx: DbTransaction, now: Date) {
         check(m.trace === null, `mensagem ${m.id}: trace só em mensagens do AGENT`);
       }
       if (m.authorType === "AGENT" || m.authorType === "SYSTEM") check(m.authorId === null, `mensagem ${m.id}: autor deveria ser null`);
+      check((m.authorType === "SYSTEM") === (m.systemKind !== null), `mensagem ${m.id}: systemKind só e sempre em SYSTEM`);
     }
   }
 
   for (const c of conversations.filter((conversation) => conversation.handoffAt !== null)) {
     const handoffAt = c.handoffAt;
-    const marker = c.messages.some((m) => m.authorType === "SYSTEM" && m.content === HANDOFF_SYSTEM_MESSAGE && sameTime(m.createdAt, handoffAt));
+    const marker = c.messages.some((m) => m.systemKind === "HANDOFF" && m.content === HANDOFF_SYSTEM_MESSAGE && sameTime(m.createdAt, handoffAt));
     check(marker, `conversa ${c.id}: sem mensagem de transferência em handoffAt`);
   }
 
   const users = new Map((await tx.user.findMany({ select: { id: true, name: true, role: true } })).map((u) => [u.id, u] as const));
   for (const c of conversations) {
-    const hasSystem = (content: string, at: Date | null) =>
-      at !== null && c.messages.some((m) => m.authorType === "SYSTEM" && m.content === content && sameTime(m.createdAt, at));
+    const hasSystem = (kind: SystemMessageKind, content: string, at: Date | null) =>
+      at !== null && c.messages.some((m) => m.systemKind === kind && m.content === content && sameTime(m.createdAt, at));
     const handoffFilled = c.handoffReason !== null && c.handoffSummary !== null && c.handoffAt !== null;
     const analyst = c.analystId ? users.get(c.analystId) : undefined;
     if (c.status === "WAITING_ANALYST") {
@@ -314,7 +325,7 @@ async function verify(tx: DbTransaction, now: Date) {
     }
     if (c.status === "WITH_ANALYST") {
       check(analyst !== undefined && c.assignedAt !== null && handoffFilled, `conversa ${c.id}: WITH_ANALYST sem analista, assignedAt ou transferência`);
-      check(hasSystem(takeoverSystemMessage(analyst.name), c.assignedAt), `conversa ${c.id}: sem a SYSTEM de quem assumiu em assignedAt`);
+      check(hasSystem("TAKEOVER", takeoverSystemMessage(analyst.name), c.assignedAt), `conversa ${c.id}: sem a SYSTEM de quem assumiu em assignedAt`);
     }
     if (c.status === "WITH_AGENT") {
       const clean = c.analystId === null && c.assignedAt === null && c.handoffReason === null && c.handoffSummary === null && c.handoffAt === null;
@@ -323,11 +334,11 @@ async function verify(tx: DbTransaction, now: Date) {
     if (c.status === "CLOSED") {
       check(c.closedAt !== null, `conversa ${c.id}: CLOSED sem closedAt`);
       if (c.analystId !== null) {
-        check(analyst !== undefined && hasSystem(closeSystemMessage(analyst.name), c.closedAt), `conversa ${c.id}: sem a SYSTEM de encerramento em closedAt`);
+        check(analyst !== undefined && hasSystem("CLOSED", closeSystemMessage(analyst.name), c.closedAt), `conversa ${c.id}: sem a SYSTEM de encerramento em closedAt`);
       }
     }
     if (c.returnedToAgentAt !== null) {
-      check(hasSystem(RETURN_SYSTEM_MESSAGE, c.returnedToAgentAt), `conversa ${c.id}: sem a SYSTEM de devolução em returnedToAgentAt`);
+      check(hasSystem("RETURNED", RETURN_SYSTEM_MESSAGE, c.returnedToAgentAt), `conversa ${c.id}: sem a SYSTEM de devolução em returnedToAgentAt`);
     }
     for (const m of c.messages.filter((message) => message.authorType === "ANALYST")) {
       check(m.authorId !== null && users.get(m.authorId)?.role === "ANALYST", `mensagem ${m.id}: ANALYST sem autor analista`);
@@ -338,6 +349,13 @@ async function verify(tx: DbTransaction, now: Date) {
     const waiting = conversations.find((c) => c.status === "WAITING_ANALYST" && c.handoffReason === reason);
     check(waiting !== undefined && waiting.handoffSummary !== null && waiting.handoffAt !== null, `sem conversa aguardando analista por ${reason}`);
   }
+
+  // Demo da gestão de chamados: um chamado na fila ligado a uma conversa que um analista já assumiu.
+  const assumed = new Set(conversations.filter((c) => c.status === "WITH_ANALYST").map((c) => c.id));
+  const demoTicket = tickets.find(
+    (t) => t.status === "WAITING_ANALYST" && t.events.some((e) => e.conversationId !== null && assumed.has(e.conversationId)),
+  );
+  check(demoTicket !== undefined, "sem chamado WAITING_ANALYST ligado a conversa WITH_ANALYST");
 
   const nearLimit = conversations.find((c) => c.id === NEAR_LIMIT_CONVERSATION_ID);
   check(nearLimit?.status === "WITH_AGENT" && nearLimit.messageCount === CONVERSATION_MESSAGE_LIMIT - 1, "conversa perto do limite divergente");

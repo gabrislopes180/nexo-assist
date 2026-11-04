@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { consoleConversationKeys } from "@/entities/conversation";
 import { SESSION_QUERY_KEY } from "@/entities/session";
+import { consoleTicketKeys } from "@/entities/ticket";
 import { CONSOLE_QUERY_ROOT } from "@/shared/api/query-keys";
 import { useEventStream } from "@/shared/lib/hooks/use-event-stream";
 import {
@@ -9,7 +10,7 @@ import {
   CONSOLE_EVENT_TYPES,
 } from "../lib/apply-console-event";
 
-/** Reserva com o stream caído: a lista e as mensagens abertas voltam a ser buscadas. */
+/** Reserva com o stream caído: lista, mensagens e chamados abertos voltam a ser buscados. */
 const FALLBACK_POLL_MS = 10_000;
 
 /**
@@ -47,6 +48,9 @@ export function useConsoleLiveUpdates() {
       });
       void queryClient.invalidateQueries({
         queryKey: [...CONSOLE_QUERY_ROOT, "messages"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: consoleTicketKeys.all,
       });
     }, FALLBACK_POLL_MS);
     return () => clearInterval(timer);

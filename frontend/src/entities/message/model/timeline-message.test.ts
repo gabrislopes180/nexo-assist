@@ -16,6 +16,16 @@ const agent = {
   },
 };
 
+const system = {
+  id: "s1",
+  authorType: "SYSTEM",
+  author: null,
+  content: "Transferida para um analista",
+  createdAt: "2026-11-03T10:05:00.000Z",
+  trace: null,
+  systemKind: "HANDOFF",
+};
+
 describe("timelineMessageSchema", () => {
   it("guarda as ações do trace", () => {
     expect(timelineMessageSchema.parse(agent).trace?.actions).toHaveLength(1);
@@ -46,5 +56,27 @@ describe("timelineMessageSchema", () => {
     expect(
       timelineMessageSchema.safeParse({ ...agent, authorType: "BOT" }).success,
     ).toBe(false);
+  });
+
+  it.each(["HANDOFF", "TAKEOVER", "RETURNED", "CLOSED"] as const)(
+    "guarda o systemKind %s",
+    (systemKind) => {
+      const parsed = timelineMessageSchema.parse({
+        ...system,
+        systemKind,
+      });
+      expect(parsed.systemKind).toBe(systemKind);
+    },
+  );
+
+  it("systemKind desconhecido ou ausente vira null sem derrubar a mensagem", () => {
+    const rest: Record<string, unknown> = { ...system };
+    delete rest.systemKind;
+    expect(
+      timelineMessageSchema.parse({ ...system, systemKind: "REOPENED" })
+        .systemKind,
+    ).toBeNull();
+    expect(timelineMessageSchema.parse(rest).systemKind).toBeNull();
+    expect(timelineMessageSchema.parse({ ...agent, systemKind: null }).systemKind).toBeNull();
   });
 });

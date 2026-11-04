@@ -11,3 +11,21 @@ export function normalizeSearchText(text: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/** Keyword repetida não pontua duas vezes, e a só de espaços viraria "" e casaria com tudo. */
+export function normalizedKeywords(keywords: readonly string[]): string[] {
+  return [...new Set(keywords.map(normalizeSearchText))].filter((keyword) => keyword !== "");
+}
+
+/** Termos que aparecem em qualquer relato de problema e não dizem qual é o problema (já normalizados). */
+export const GENERIC_TERMS: ReadonlySet<string> = new Set([
+  "parou", "parar", "parado", "parada", "para", "funciona", "funcionar", "funcionando", "funcionou",
+  "nao", "sem", "com", "que", "meu", "minha", "esta", "ficou", "mais", "muito", "hoje",
+  "problema", "problemas", "erro", "erros", "falha", "falhas", "falhando", "defeito", "quebrou", "quebrado",
+  "ajuda", "preciso", "consigo", "conseguir", "consegue",
+]);
+
+/** Keyword (já normalizada) com ao menos um termo de 3 letras ou mais que não seja genérico. */
+export function isSignificant(keyword: string): boolean {
+  return keyword.split(" ").some((term) => term.length >= 3 && !GENERIC_TERMS.has(term));
+}

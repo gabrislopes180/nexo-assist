@@ -117,6 +117,18 @@ export function canTransition(
   return ANALYST_TRANSITIONS[from].includes(to);
 }
 
+/** Destinos que um analista pode escolher agora, na ordem da tabela; o console oferece só estes. */
+export function allowedAnalystStatuses(type: TicketType, from: TicketStatus): TicketStatus[] {
+  return ANALYST_TRANSITIONS[from].filter((to) => canTransition(type, from, to, "ANALYST"));
+}
+
+/** Pausar (o que falta do funcionário) e resolver (a solução) exigem nota interna. */
+export const STATUS_NOTE_REQUIRED = ["WAITING_EMPLOYEE", "RESOLVED"] as const satisfies readonly TicketStatus[];
+
+export function requiresStatusNote(to: TicketStatus): boolean {
+  return (STATUS_NOTE_REQUIRED as readonly TicketStatus[]).includes(to);
+}
+
 export type TicketTimeline = {
   type: TicketType;
   status: TicketStatus;

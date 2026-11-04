@@ -50,8 +50,8 @@ describe("conversation-queries", () => {
     });
   }
 
-  const list = (filter: "all" | "waiting" | "with-agent" | "mine" = "all", q?: string, analystId = bruno) =>
-    listForConsole(client, { now: NOW, filter, analystId, ...(q === undefined ? {} : { q }) });
+  const list = (filter: "all" | "waiting" | "with-agent" | "mine" = "all", q?: string, analystId = bruno, limit?: number) =>
+    listForConsole(client, { now: NOW, filter, analystId, ...(q === undefined ? {} : { q }) }, limit);
 
   before(async () => {
     client = await createTestDatabase();
@@ -138,6 +138,41 @@ describe("conversation-queries", () => {
       assert.deepEqual((await list("all", "joao")).map((r) => r.id), [a.id]);
       assert.deepEqual((await list("all", "inc-20311")).map((r) => r.id), [b.id]);
       assert.deepEqual(await list("all", "ninguém"), []);
+    });
+
+    it(`q acha a conversa mais antiga que as ${CONSOLE_LIST_LIMIT} mais recentes`, async () => {
+      await client.conversation.createMany({
+        data: Array.from({ length: 205 }, (_, i) => ({ ownerId: maria, status: "WITH_AGENT" as const, lastMessageAt: minutesAgo(i + 1) })),
+      });
+      const old = await conversation(joao, "WITH_AGENT", { lastMessageAt: minutesAgo(500) });
+      const coded = await conversation(maria, "WAITING_ANALYST", { lastMessageAt: minutesAgo(600) });
+      await ticket(maria, "REQ-555", coded.id);
+      assert.deepEqual((await list("all", "JOÃO")).map((r) => r.id), [old.id]);
+      assert.deepEqual((await list("all", "req-555")).map((r) => r.id), [coded.id]);
+    });
+
+    it("q segue procurando quando candidatos do banco não casam com o chamado derivado", async () => {
+      await ticket(maria, "INC-31");
+      for (let i = 1; i <= 3; i++) {
+        await conversation(joao, "WAITING_ANALYST", { handoffSummary: "Cita o INC-31, que é da Maria.", lastMessageAt: minutesAgo(i) });
+      }
+      const match = await conversation(maria, "WAITING_ANALYST", { handoffSummary: "INC-31 parado.", lastMessageAt: minutesAgo(10) });
+      assert.deepEqual((await list("all", "inc-31", bruno, 2)).map((r) => r.id), [match.id]);
+    });
+
+    it("com o mesmo createdAt, a última mensagem e o último evento desempatam pelo maior id", async () => {
+      const { id } = await conversation(joao, "WAITING_ANALYST");
+      const at = minutesAgo(20);
+      await client.message.create({ data: { id: "m-b", conversationId: id, authorType: "AGENT", content: "b", createdAt: at, trace: TRACE("LOW") } });
+      await client.message.create({ data: { id: "m-a", conversationId: id, authorType: "AGENT", content: "a", createdAt: at, trace: TRACE("HIGH") } });
+      await client.message.create({ data: { id: "m-z", conversationId: id, authorType: "SYSTEM", content: "s", createdAt: at } });
+      await ticket(joao, "INC-41", id, at);
+      await ticket(joao, "INC-40", id, at);
+      const [row] = await list();
+      assert.equal(row?.lastMessage?.content, "b");
+      assert.equal(row?.lastAgentConfidence, "LOW");
+      const events = await client.ticketEvent.findMany({ where: { conversationId: id }, orderBy: { id: "desc" }, include: { ticket: true } });
+      assert.equal(row?.ticketCode, events[0]?.ticket.code);
     });
 
     it(`corta em ${CONSOLE_LIST_LIMIT} depois de ordenar no banco`, async () => {

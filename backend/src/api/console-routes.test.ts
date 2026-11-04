@@ -17,6 +17,7 @@ import type { ConversationStatus } from "../generated/prisma/enums.js";
 import type { ConsoleConversation, ConsoleTickets, TimelineMessageView } from "../shared/console.js";
 import { createTicketService, TicketServiceUnavailableError, type FullTicketService } from "../tickets/ticket-service.js";
 import type { ApiConfig } from "./config.js";
+import { unusedConsoleTicketService, unusedKnowledgeService } from "./test-support.js";
 
 const SECRET = "segredo-de-teste-com-mais-de-32-caracteres";
 const config: ApiConfig = { sessionSecret: SECRET, corsOrigins: ["http://localhost:3000"], isProduction: false };
@@ -83,7 +84,7 @@ describe("rotas do console do analista", () => {
     const agentRunner: AgentRunner = { runTurn: () => Promise.reject(new Error("a LLM não deveria ser chamada")) };
     const chatService = createChatService({ queries: createConversationQueries(client), conversations, agentRunner, tickets });
     const consoleService = createConsoleService({ conversations, queries: createConversationQueries(client), tickets });
-    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService }).listen(0);
+    server = createApp({ eventBus: createEventBus(), config, authService: createAuthService(client), chatService, consoleService, consoleTicketService: unusedConsoleTicketService, knowledgeService: unusedKnowledgeService }).listen(0);
     await new Promise((resolve) => server.once("listening", resolve));
     url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });

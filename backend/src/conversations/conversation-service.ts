@@ -144,8 +144,8 @@ async function createConversationTurn(client: TurnClient, ownerId: string, conte
 const ANALYST_STATUSES = ["WAITING_ANALYST", "WITH_ANALYST"] as const;
 
 /**
- * Com o agent, o incremento condicional respeita o limite de 30. Com analista, não há limite:
- * a trava é de custo da LLM. Se o condicional falhar (estado mudou), relê e reavalia uma vez.
+ * Com o agent, o incremento condicional respeita o limite de 30. Com analista, não há limite nem
+ * contagem: a trava é de custo da LLM. Se o condicional falhar (estado mudou), relê e reavalia uma vez.
  */
 async function continueConversationTurn(
   client: TurnClient,
@@ -190,9 +190,10 @@ async function continueConversationTurn(
       };
     }
 
+    // Com analista, a mensagem não conta na cota: a cota é do agent, e devolvida a conversa a pessoa precisa poder seguir.
     const { count } = await client.conversation.updateMany({
       where: { ...where, status: { in: [...ANALYST_STATUSES] } },
-      data: { messageCount: { increment: 1 }, lastMessageAt: now },
+      data: { lastMessageAt: now },
     });
     if (count === 0) continue;
     const message = toTimelineMessage(
@@ -205,7 +206,7 @@ async function continueConversationTurn(
 
 /** A mensagem do agent como entra na linha do tempo (e no SSE). */
 function agentTimelineMessage(conversationId: string, message: StoredAgentMessage): TimelineMessage {
-  return { ...message, conversationId, authorType: "AGENT", author: null };
+  return { ...message, conversationId, authorType: "AGENT", systemKind: null, author: null };
 }
 
 function toPendingDraft(proposal: ProposedTicketDraft, now: Date): ConfirmableDraft {
@@ -297,7 +298,7 @@ export function createConversationService(
       const confirmed = await client.$transaction((tx) => confirmPendingDraft(tx, { ownerId, draftId, request, now }));
       const conversationId = confirmed.conversation.id;
       const messages = [agentTimelineMessage(conversationId, confirmed.message), ...confirmed.systemMessages];
-      publish({ conversationId, ownerId, messages, ticketsChanged: true });
+      publish({ conversationId, ownerId, messages, ticketsChanged: true, ticketCode: confirmed.ticket.code });
       return confirmed;
     },
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { X } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import {
   conversationTicketEvent,
   type ConsoleConversation,
@@ -16,14 +17,41 @@ import { getFirstName } from "@/shared/lib/get-first-name";
 import { Button } from "@/shared/ui/button";
 import { PaneLoading } from "@/shared/ui/pane-loading";
 import { PaneMessage } from "@/shared/ui/pane-message";
+import { TicketDetailView } from "./ticket-detail-view";
 
 interface TicketPanelProps {
   conversation: ConsoleConversation;
+  now: Date;
   onClose: () => void;
 }
 
-export function TicketPanel({ conversation, onClose }: TicketPanelProps) {
+const DETAIL_TITLE_ID = "ticket-detail-title";
+
+/**
+ * Pilha no painel: lista de chamados ⇄ detalhe de um chamado. Quem monta usa
+ * `key={conversation.id}`, então trocar de conversa volta para a lista.
+ */
+export function TicketPanel({ conversation, now, onClose }: TicketPanelProps) {
   const firstName = getFirstName(conversation.owner.name);
+  const [openCode, setOpenCode] = useState<string | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  // De onde o detalhe saiu: recebe o foco de volta.
+  const [returnCode, setReturnCode] = useState<string | null>(null);
+
+  const open = (code: string) => {
+    setReturnCode(code);
+    setOpenCode(code);
+  };
+
+  // Ao voltar, o foco volta para a linha ou o card de onde o detalhe saiu.
+  useEffect(() => {
+    if (openCode !== null || returnCode === null) return;
+    panelRef.current
+      ?.querySelector<HTMLElement>(
+        `[data-ticket-code="${CSS.escape(returnCode)}"]`,
+      )
+      ?.focus();
+  }, [openCode, returnCode]);
   const { data, isPending, isError, isFetching, refetch } =
     useConversationTickets(conversation.id);
   const all = data
@@ -66,6 +94,10 @@ export function TicketPanel({ conversation, onClose }: TicketPanelProps) {
             <CurrentTicket
               ticket={data.conversationTicket}
               event={conversationTicketEvent(conversation)}
+              now={now}
+              onOpen={() => {
+                if (data.conversationTicket) open(data.conversationTicket.code);
+              }}
             />
           ) : (
             <p className="text-small text-ink-3">
@@ -80,7 +112,12 @@ export function TicketPanel({ conversation, onClose }: TicketPanelProps) {
           {others.length > 0 ? (
             <ul>
               {others.map((ticket) => (
-                <TicketListItem key={ticket.code} ticket={ticket} />
+                <TicketListItem
+                  key={ticket.code}
+                  ticket={ticket}
+                  now={now}
+                  onOpen={() => open(ticket.code)}
+                />
               ))}
             </ul>
           ) : (
@@ -95,21 +132,44 @@ export function TicketPanel({ conversation, onClose }: TicketPanelProps) {
 
   return (
     <aside
+      ref={panelRef}
       aria-labelledby="ticket-panel-title"
       className="flex h-full w-(--panel-width) max-w-full shrink-0 flex-col border-l border-rule bg-paper"
     >
       <div className="flex h-(--topbar-height) shrink-0 items-center gap-3 border-b border-rule px-5">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <h2
-            id="ticket-panel-title"
-            className="truncate text-heading text-ink"
-          >
-            Chamados de {firstName}
-          </h2>
-          {data ? (
-            <p className="text-caption text-ink-3">{ticketCountsLabel(all)}</p>
-          ) : null}
-        </div>
+        {openCode ? (
+          <>
+            <Button
+              variant="ghost"
+              aria-label={`Voltar para os chamados de ${firstName}`}
+              onClick={() => setOpenCode(null)}
+              className="-ml-2.5 px-2.5"
+            >
+              <ArrowLeft aria-hidden="true" size={16} />
+              Voltar
+            </Button>
+            <p
+              id="ticket-panel-title"
+              className="min-w-0 truncate text-caption font-medium text-ink-3"
+            >
+              {openCode}
+            </p>
+          </>
+        ) : (
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h2
+              id="ticket-panel-title"
+              className="truncate text-heading text-ink"
+            >
+              Chamados de {firstName}
+            </h2>
+            {data ? (
+              <p className="text-caption text-ink-3">
+                {ticketCountsLabel(all)}
+              </p>
+            ) : null}
+          </div>
+        )}
         <button
           type="button"
           aria-label="Fechar chamados"
@@ -120,7 +180,17 @@ export function TicketPanel({ conversation, onClose }: TicketPanelProps) {
         </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-5 pt-6 pb-6">
-        {body()}
+        {openCode ? (
+          <TicketDetailView
+            code={openCode}
+            conversationId={conversation.id}
+            now={now}
+            titleId={DETAIL_TITLE_ID}
+            onBack={() => setOpenCode(null)}
+          />
+        ) : (
+          body()
+        )}
       </div>
     </aside>
   );

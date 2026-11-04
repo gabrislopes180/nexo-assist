@@ -1,4 +1,5 @@
 import { Prisma } from "../generated/prisma/client.js";
+import type { SystemMessageKind } from "../generated/prisma/enums.js";
 import { ConversationNotFoundError } from "./conversation-rules.js";
 import { readSnapshot, timelineMessageSelect, toTimelineMessage, type AttendanceResult, type Person, type TimelineMessage } from "./timeline.js";
 
@@ -37,13 +38,20 @@ type Action = { conversationId: string; analyst: Person; now: Date };
 
 async function writeMessage(
   tx: Tx,
-  data: { conversationId: string; authorType: "SYSTEM" | "ANALYST"; authorId: string | null; content: string; createdAt: Date },
+  data: {
+    conversationId: string;
+    authorType: "SYSTEM" | "ANALYST";
+    systemKind: SystemMessageKind | null;
+    authorId: string | null;
+    content: string;
+    createdAt: Date;
+  },
 ): Promise<TimelineMessage> {
   return toTimelineMessage(await tx.message.create({ data, select: timelineMessageSelect }));
 }
 
-const systemMessage = (tx: Tx, conversationId: string, content: string, createdAt: Date) =>
-  writeMessage(tx, { conversationId, authorType: "SYSTEM", authorId: null, content, createdAt });
+const systemMessage = (tx: Tx, conversationId: string, systemKind: SystemMessageKind, content: string, createdAt: Date) =>
+  writeMessage(tx, { conversationId, authorType: "SYSTEM", systemKind, authorId: null, content, createdAt });
 
 /** Com o condicional recusado, relê para escolher a resposta; inexistente vira 404. */
 async function currentState(tx: Tx, conversationId: string) {
@@ -72,7 +80,7 @@ export async function takeOver(tx: Tx, { conversationId, analyst, now }: Action)
     }
     throw new ConversationNotWaitingError();
   }
-  const message = await systemMessage(tx, conversationId, takeoverSystemMessage(analyst.name), now);
+  const message = await systemMessage(tx, conversationId, "TAKEOVER", takeoverSystemMessage(analyst.name), now);
   return { snapshot: await readSnapshot(tx, conversationId), createdMessages: [message] };
 }
 
@@ -88,32 +96,37 @@ export async function replyAsAnalyst(
     await currentState(tx, conversationId);
     throw new ConversationNotAssignedError();
   }
-  const message = await writeMessage(tx, { conversationId, authorType: "ANALYST", authorId: analyst.id, content, createdAt: now });
+  const message = await writeMessage(tx, { conversationId, authorType: "ANALYST", systemKind: null, authorId: analyst.id, content, createdAt: now });
   return { snapshot: await readSnapshot(tx, conversationId), createdMessages: [message], message };
 }
 
-/** Em espera (sem assumir) ou assumida por mim, de volta ao agent. Não é idempotente: a segunda chamada vê WITH_AGENT. */
+/**
+ * Em espera (sem assumir) ou assumida por mim, de volta ao agent. Não é idempotente: a segunda chamada vê WITH_AGENT.
+ * Só a devolução de quem assumiu grava `returnedToAgentAt` (o modo "devolvida por analista" do agent);
+ * sem ninguém assumir, o agent volta ao normal e uma devolução anterior, se houver, continua valendo.
+ */
 export async function returnToAgent(tx: Tx, { conversationId, analyst, now }: Action): Promise<AttendanceResult> {
-  const { count } = await tx.conversation.updateMany({
-    where: { id: conversationId, OR: [{ status: "WAITING_ANALYST" }, { status: "WITH_ANALYST", analystId: analyst.id }] },
-    data: {
-      status: "WITH_AGENT",
-      analystId: null,
-      assignedAt: null,
-      handoffReason: null,
-      handoffSummary: null,
-      handoffAt: null,
-      pendingDraft: Prisma.DbNull,
-      pendingDraftId: null,
-      returnedToAgentAt: now,
-      lastMessageAt: now,
-    },
+  const data = {
+    status: "WITH_AGENT",
+    analystId: null,
+    assignedAt: null,
+    handoffReason: null,
+    handoffSummary: null,
+    handoffAt: null,
+    pendingDraft: Prisma.DbNull,
+    pendingDraftId: null,
+    lastMessageAt: now,
+  } as const;
+  const assumed = await tx.conversation.updateMany({
+    where: { id: conversationId, status: "WITH_ANALYST", analystId: analyst.id },
+    data: { ...data, returnedToAgentAt: now },
   });
+  const { count } = assumed.count > 0 ? assumed : await tx.conversation.updateMany({ where: { id: conversationId, status: "WAITING_ANALYST" }, data });
   if (count === 0) {
     await currentState(tx, conversationId);
     throw new ConversationNotWaitingError();
   }
-  const message = await systemMessage(tx, conversationId, RETURN_SYSTEM_MESSAGE, now);
+  const message = await systemMessage(tx, conversationId, "RETURNED", RETURN_SYSTEM_MESSAGE, now);
   return { snapshot: await readSnapshot(tx, conversationId), createdMessages: [message] };
 }
 
@@ -130,6 +143,6 @@ export async function closeAttendance(tx: Tx, { conversationId, analyst, now }: 
     }
     throw new ConversationNotAssignedError();
   }
-  const message = await systemMessage(tx, conversationId, closeSystemMessage(analyst.name), now);
+  const message = await systemMessage(tx, conversationId, "CLOSED", closeSystemMessage(analyst.name), now);
   return { snapshot: await readSnapshot(tx, conversationId), createdMessages: [message] };
 }

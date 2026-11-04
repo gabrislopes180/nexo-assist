@@ -11,9 +11,10 @@ import {
   conversationSchema,
   type ConversationStatus,
 } from "@/entities/conversation";
-import { timelineMessageSchema } from "@/entities/message";
+import { messageCreatedEventSchema } from "@/entities/message";
 import { SESSION_QUERY_KEY } from "@/entities/session";
 import { ApiError } from "@/shared/api/api-error";
+import { isResync } from "@/shared/api/stream-sync";
 import { useEventStream } from "@/shared/lib/hooks/use-event-stream";
 import type { ChatEvent } from "../model/chat-reducer";
 import { getChatConversation } from "./get-conversation";
@@ -22,11 +23,6 @@ import { getChatConversation } from "./get-conversation";
 const FALLBACK_POLL_MS = 7_500;
 const LOST_LOCK = { message: "Esta conversa não está mais disponível." };
 
-const syncSchema = z.object({ mode: z.enum(["REPLAY", "RESYNC"]) });
-const messageCreatedSchema = z.object({
-  conversationId: z.string().min(1),
-  message: timelineMessageSchema,
-});
 const conversationUpdatedSchema = z.object({
   conversation: conversationSchema,
 });
@@ -104,11 +100,12 @@ export function useChatStream({
     enabled: conversationId !== undefined && status !== "CLOSED",
     events: {
       sync: (data) => {
-        const parsed = syncSchema.safeParse(data);
-        if (parsed.success && parsed.data.mode === "RESYNC") resync();
+        // Também no primeiro sync: o stream só abre depois do POST que criou a
+        // conversa, então a resposta dele é sempre anterior à inscrição.
+        if (isResync(data)) resync();
       },
       "message.created": (data) => {
-        const parsed = messageCreatedSchema.safeParse(data);
+        const parsed = messageCreatedEventSchema.safeParse(data);
         if (parsed.success) dispatch({ type: "streamMessage", ...parsed.data });
       },
       "conversation.updated": (data) => {

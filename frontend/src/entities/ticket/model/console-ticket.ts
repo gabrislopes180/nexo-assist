@@ -23,6 +23,9 @@ export const consoleTicketSchema = z.object({
   title: z.string().min(1),
   createdAt: z.iso.datetime(),
   resolvedAt: z.iso.datetime().nullable(),
+  /** Null em WAITING_EMPLOYEE (pausado) e RESOLVED. */
+  dueAt: z.iso.datetime().nullable(),
+  overdue: z.boolean(),
 });
 
 export const conversationTicketsResponseSchema = z.object({

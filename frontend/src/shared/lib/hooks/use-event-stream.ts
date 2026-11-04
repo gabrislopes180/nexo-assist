@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { openEventStream, type StreamStatus } from "@/shared/api/event-stream";
 
 interface UseEventStreamOptions {
@@ -13,6 +13,11 @@ interface UseEventStreamOptions {
  * Liga o núcleo SSE ao ciclo de vida do componente. O cleanup fecha o stream:
  * desmontar, rota escondida pela Activity, logout e troca de usuário (`key`).
  * Desligado, o status fica `down`: quem usa liga o polling de reserva.
+ *
+ * Ao reabrir (rota mostrada de novo, `enabled` de volta), continua do último
+ * evento recebido: o servidor faz o REPLAY e o consumidor não precisa buscar
+ * tudo de novo. Só a primeira conexão do componente (ou um id fora do buffer)
+ * recebe RESYNC. Troca de usuário remonta pela `key` e começa do zero.
  */
 export function useEventStream({
   url,
@@ -21,6 +26,8 @@ export function useEventStream({
   onClosedByServer,
 }: UseEventStreamOptions): StreamStatus {
   const [status, setStatus] = useState<StreamStatus>("connecting");
+  // O id vale só para a mesma URL; trocar de stream começa do zero.
+  const cursorRef = useRef<{ url: string; id: string } | null>(null);
   const eventTypes = Object.keys(events).sort().join("|");
 
   const dispatch = useEffectEvent((type: string, data: unknown) => {
@@ -36,9 +43,14 @@ export function useEventStream({
         .filter(Boolean)
         .map((type) => [type, (data: unknown) => dispatch(type, data)]),
     );
+    const cursor = cursorRef.current;
     const stream = openEventStream({
       url,
       events: handlers,
+      lastEventId: cursor?.url === url ? cursor.id : null,
+      onLastEventId: (id) => {
+        cursorRef.current = { url, id };
+      },
       onStatus: setStatus,
       onClosedByServer: () => closedByServer(),
     });

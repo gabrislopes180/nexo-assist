@@ -1,4 +1,4 @@
-import type { ConversationStatus, HandoffReason, MessageAuthorType } from "../../generated/prisma/enums.js";
+import type { ConversationStatus, HandoffReason, MessageAuthorType, SystemMessageKind } from "../../generated/prisma/enums.js";
 import type { AgentTrace } from "../../shared/transparency.js";
 import { C2_HANDOFF_SUMMARY, C3_HANDOFF_SUMMARY } from "./tickets.js";
 import { closeSystemMessage, RETURN_SYSTEM_MESSAGE, takeoverSystemMessage } from "../../conversations/attendance.js";
@@ -23,7 +23,25 @@ export type MessageSeed = {
   authorKey: UserKey | null; // null para AGENT e SYSTEM
   content: string;
   trace?: AgentTrace; // só em mensagens do AGENT
+  systemKind?: SystemMessageKind; // só em mensagens SYSTEM
 };
+
+/**
+ * O `messageCount` gravado: mensagens do funcionário enviadas com a conversa no agent. A fase
+ * troca nas SYSTEM: HANDOFF leva ao analista e RETURNED traz de volta ao agent.
+ */
+export function agentQuotaUsed(
+  messages: ReadonlyArray<{ authorType: MessageAuthorType; systemKind?: SystemMessageKind | null | undefined }>,
+): number {
+  let withAgent = true;
+  let used = 0;
+  for (const { authorType, systemKind } of messages) {
+    if (systemKind === "HANDOFF") withAgent = false;
+    if (systemKind === "RETURNED") withAgent = true;
+    if (authorType === "EMPLOYEE" && withAgent) used++;
+  }
+  return used;
+}
 
 export type ConversationSeed = {
   key: ConversationKey;
@@ -195,11 +213,12 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Chamados críticos são sempre transferidos para um analista.",
           },
         },
-        { at: t({ minutes: 29 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 29 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
       ],
     },
     {
       key: "C3",
+      id: "seed-conv-with-analyst",
       ownerKey: "rafael",
       status: "WITH_ANALYST",
       analystKey: "bruno",
@@ -266,8 +285,8 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Pedido explícito para falar com uma pessoa.",
           },
         },
-        { at: t({ hours: 2, minutes: 55 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
-        { at: t({ minutes: 40 }), authorType: "SYSTEM", authorKey: null, content: takeoverSystemMessage(nameOf("bruno")) },
+        { at: t({ hours: 2, minutes: 55 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 40 }), authorType: "SYSTEM", systemKind: "TAKEOVER", authorKey: null, content: takeoverSystemMessage(nameOf("bruno")) },
         {
           at: t({ minutes: 38 }),
           authorType: "ANALYST",
@@ -311,7 +330,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Pedido explícito para falar com uma pessoa.",
           },
         },
-        { at: t({ minutes: 12 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 12 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
       ],
     },
     {
@@ -345,7 +364,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Assunto fora da central de ajuda e sem categoria clara de chamado.",
           },
         },
-        { at: t({ minutes: 20 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 20 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
       ],
     },
     {
@@ -385,7 +404,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Aceite explícito da oferta de transferência.",
           },
         },
-        { at: t({ minutes: 5 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 5 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
       ],
     },
     {
@@ -415,8 +434,8 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Pedido explícito para falar com uma pessoa.",
           },
         },
-        { at: t({ minutes: 69 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
-        { at: t({ minutes: 60 }), authorType: "SYSTEM", authorKey: null, content: takeoverSystemMessage(nameOf("bruno")) },
+        { at: t({ minutes: 69 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ minutes: 60 }), authorType: "SYSTEM", systemKind: "TAKEOVER", authorKey: null, content: takeoverSystemMessage(nameOf("bruno")) },
         {
           at: t({ minutes: 58 }),
           authorType: "ANALYST",
@@ -424,7 +443,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           content: "Oi, Ana! Reiniciei a fila de impressão do 3º andar. Pode tentar imprimir de novo?",
         },
         { at: t({ minutes: 55 }), authorType: "EMPLOYEE", authorKey: "ana", content: "Agora saiu, obrigada!" },
-        { at: t({ minutes: 54 }), authorType: "SYSTEM", authorKey: null, content: RETURN_SYSTEM_MESSAGE },
+        { at: t({ minutes: 54 }), authorType: "SYSTEM", systemKind: "RETURNED", authorKey: null, content: RETURN_SYSTEM_MESSAGE },
       ],
     },
     {
@@ -459,8 +478,8 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
             reason: "Pedido explícito para falar com uma pessoa.",
           },
         },
-        { at: t({ hours: 3, minutes: 39 }), authorType: "SYSTEM", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
-        { at: t({ hours: 3, minutes: 30 }), authorType: "SYSTEM", authorKey: null, content: takeoverSystemMessage(nameOf("rafael")) },
+        { at: t({ hours: 3, minutes: 39 }), authorType: "SYSTEM", systemKind: "HANDOFF", authorKey: null, content: HANDOFF_SYSTEM_MESSAGE },
+        { at: t({ hours: 3, minutes: 30 }), authorType: "SYSTEM", systemKind: "TAKEOVER", authorKey: null, content: takeoverSystemMessage(nameOf("rafael")) },
         {
           at: t({ hours: 3, minutes: 28 }),
           authorType: "ANALYST",
@@ -468,7 +487,7 @@ export function buildConversations(now: Date, dueAtOf: (code: string) => Date): 
           content: "Oi, Juliana! Liberei o leitor de PDF no Portal de Software. Ele já aparece para você instalar por lá.",
         },
         { at: t({ hours: 3, minutes: 10 }), authorType: "EMPLOYEE", authorKey: "juliana", content: "Apareceu e já instalei. Obrigada!" },
-        { at: t({ hours: 3 }), authorType: "SYSTEM", authorKey: null, content: closeSystemMessage(nameOf("rafael")) },
+        { at: t({ hours: 3 }), authorType: "SYSTEM", systemKind: "CLOSED", authorKey: null, content: closeSystemMessage(nameOf("rafael")) },
       ],
     },
   ];
