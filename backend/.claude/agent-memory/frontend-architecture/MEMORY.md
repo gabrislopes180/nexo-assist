@@ -1,1 +1,0 @@
-- [Realtime SSE no frontend](project_realtime_sse_frontend.md) — onde vive o stream, dedupe por id, fila no reducer, fallback por invalidacao

@@ -1,2 +1,0 @@
-- [Console do analista e SSE](project_console_attendance_sse.md) — rotas, codigos 409, schema, limite de 30, politica apos devolver, desenho do SSE
-- [Seed e README](project_seed_and_readme_quirks.md) — papeis dos usuarios demo divergentes; C3 tem dono analista

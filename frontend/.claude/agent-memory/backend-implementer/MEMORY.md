@@ -1,1 +1,0 @@
-- [Demo da gestão de chamados](project_ticket_management_demo.md) — INC-20405 em seed-conv-with-analyst; reseed após curl; servidor próprio em outra porta

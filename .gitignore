@@ -44,6 +44,11 @@ pnpm-debug.log*
 .claude/settings.local.json
 .claude/agent-memory-local/
 
+# Memórias locais geradas nos subdiretórios (preservar a .claude da raiz)
+/frontend/.claude/agent-memory/
+/backend/.claude/agent-memory/
+/docs/architecture/.claude/agent-memory/
+
 # Deploy
 .vercel/
 
