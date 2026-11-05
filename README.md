@@ -2,7 +2,7 @@
 
 Agent de service desk de TI desenvolvido para um desafio técnico. O funcionário tira dúvidas pela central de ajuda, consulta seus chamados, confere propostas de abertura/complemento/reabertura e pede atendimento humano. O analista acompanha a fila, assume a conversa com o agent pausado, responde, devolve ou encerra o atendimento.
 
-A implementação usa dados fictícios e segue os fluxos e regras dos Anexos A/B do PRD. A referência visual está no [design system e nas telas do protótipo](docs/design-system/README.md). O projeto pode ser executado localmente; não há deploy publicado documentado neste repositório.
+A implementação usa dados fictícios e segue os fluxos e regras dos Anexos A/B do PRD. A referência visual está no [design system e nas telas do protótipo](docs/design-system/README.md). O [frontend está publicado na Vercel](https://nexo-assist-alpha.vercel.app); a API ainda precisa ser criada/conectada. O backend aceita SQLite local ou Turso autenticado. Veja o [procedimento de integração e Render](docs/turso-render.md).
 
 ## Sumário
 
@@ -54,7 +54,22 @@ Abra `http://localhost:3000/login`. No PowerShell, pode usar `Copy-Item .env.exa
 
 ### Reinício normal e builds
 
-Para retomar o trabalho, execute somente `npm run dev` em cada diretório. Mantenha o mesmo banco e o mesmo `SESSION_SECRET`; não repita o seed. Se houver migrations novas no repositório, `npm run db:deploy` aplica as existentes sem popular novamente os dados.
+Para retomar o trabalho, execute somente `npm run dev` em cada diretório. Mantenha o mesmo banco e o mesmo `SESSION_SECRET`; não repita o seed. No SQLite local, `npm run db:deploy` aplica migrations existentes sem popular novamente os dados. Com `.env` apontando para Turso, os comandos locais são recusados; use os comandos remotos explícitos abaixo.
+
+### Turso remoto
+
+Em `backend/.env`, configure `DATABASE_URL=libsql://SEU-BANCO.turso.io` e `TURSO_AUTH_TOKEN` separado. Não altere o destino com `NODE_ENV`. `file:./dev.db` continua disponível para desenvolvimento, sem token. A suíte `npm test` força bancos temporários locais antes dos imports e não usa credenciais remotas ou LLM real.
+
+Execute em `backend/`:
+
+```sh
+npm run db:turso:inspect
+# Confira o banco e substitua FINGERPRINT_CONFERIDO pelo targetFingerprint da inspeção:
+npm run db:turso:migrate -- FINGERPRINT_CONFERIDO
+npm run db:turso:init -- FINGERPRINT_CONFERIDO
+```
+
+O migrador preserva os SQLs/triggers existentes, aplica cada arquivo em transação e registra checksums em `_nexo_migrations`. Estrutura desconhecida ou histórico divergente são recusados. O inicializador só aceita tabelas da aplicação vazias e não chama o seed destrutivo. Migração e inicialização nunca fazem parte de build/start. Detalhes, falhas parciais, smoke remoto e retorno ao SQLite estão no [guia Turso/Render](docs/turso-render.md); resultados executados estão no [registro de validação](docs/turso-validation.md).
 
 | Diretório | Comando | Finalidade |
 |---|---|---|
@@ -72,12 +87,13 @@ Copie os exemplos [backend/.env.example](backend/.env.example) e [frontend/.env.
 
 | Backend | Obrigatória | Finalidade/padrão |
 |---|---|---|
-| `DATABASE_URL` | Sim | SQLite, por exemplo `file:./dev.db`. Execute os comandos a partir de `backend/` para manter o caminho relativo consistente |
+| `DATABASE_URL` | Sim | `file:./dev.db` local ou `libsql://...` remoto; única escolha de destino. Execute os comandos a partir de `backend/` |
+| `TURSO_AUTH_TOKEN` | Só remoto | Token separado da URL; dispensável com `file:` |
 | `SESSION_SECRET` | Sim | Assinatura da sessão, mínimo de 32 caracteres; valor de exemplo recusado em produção |
 | `CORS_ORIGINS` | Sim | Origens exatas permitidas, separadas por vírgula, sem `*`, caminho ou barra final |
 | `LLM_API_KEY` | Sim | Chave do provedor; para o modelo padrão, Google AI Studio |
 | `AGENT_MODEL` | Não | `google/gemini-3.5-flash-lite` |
-| `AGENT_TIMEOUT_MS` | Não | `120000`, timeout do turno completo |
+| `AGENT_TIMEOUT_MS` | Não | `120000` local; configurar `100000` na Render para margem antes do limite externo de 120 s da Vercel |
 | `TICKET_SERVICE_SIMULATION` | Não | `off`; `down` simula indisponibilidade dos chamados e é recusado em produção |
 | `NODE_ENV` | Não | `production` ativa `Secure` no cookie |
 | `PORT` | Não | `8000` |
@@ -325,7 +341,7 @@ Não há cota diária/global de chamadas/tokens nem rate limit geral de login/ch
 |---|---|---|
 | Login demonstrativo | Permite avaliar os dois papéis com qualquer senha, conforme o PRD | Quem conhece os e-mails pode assumir as identidades de exemplo; não é autenticação corporativa. O backend continua validando papel e propriedade |
 | Dados fictícios e legado simulado | Reproduz chamados, artigos, falhas e cenários sem dependência externa de service desk | Não há integração com legado real nem administração de usuários/artigos |
-| SQLite com Prisma/libSQL | Persistência local simples, transações e setup reduzido | Durabilidade no deploy depende de volume/configuração; o código atual não configura autenticação de banco remoto |
+| SQLite/Turso com Prisma/libSQL | Desenvolvimento/testes locais e persistência remota autenticada, com transações | Turso exige URL/token e aplicação explícita do histórico SQL; SQLite local em deploy exige disco persistente |
 | SSE em memória | Sincroniza os papéis sem infraestrutura adicional | Uma instância de API; reinício perde o buffer e exige ressincronização do estado persistido |
 | Resposta completa por POST | Mantém validação/composição antes de exibir a resposta final | Não há streaming de tokens; SSE é usado para sincronização entre sessões |
 | Busca textual e contexto curto | Comportamento inspecionável e menor contexto enviado ao modelo | Semelhança não é equivalência; o modelo pode classificar ou interpretar incorretamente, e não recebe todo o histórico longo |
@@ -335,17 +351,17 @@ A aplicação protege chamados entre funcionários usando a sessão, mas não pr
 
 ## Deploy e próximos passos
 
-O deploy é um **diferencial do PRD**, não condição de execução local. Não há plataforma, URL pública ou procedimento de publicação validado documentados aqui. A persistência local após reinício não comprova durabilidade após redeploy em disco efêmero.
+O deploy é um **diferencial do PRD**, não condição de execução local. O frontend já está na Vercel; o Turso foi preparado e validado conforme [registro](docs/turso-validation.md). A API ainda não foi publicada na Render e o fluxo Vercel → Render ainda precisa de validação. O [guia de configuração](docs/turso-render.md) documenta comandos e variáveis sem publicar serviços.
 
 Antes de publicar uma demonstração:
 
-1. Escolher hospedagem para o frontend e processo contínuo para a API, inicialmente com uma instância. Garantir armazenamento persistente e backup do SQLite; uma eventual adoção de banco remoto exige validar cliente, credenciais e migrations.
+1. Criar a API Node na Render com root `backend`, build `npm ci --include=dev && npm run build` e start `npm start`, inicialmente com uma instância. Usar o Turso preparado, sem banco no disco efêmero.
 2. Configurar chave da LLM e `SESSION_SECRET` próprios no servidor, `NODE_ENV=production`, origens exatas em CORS e `API_PROXY_TARGET` no build. Proteger o acesso/custo da demo sem confundir o login simulado com autenticação real.
-3. Aplicar somente migrations existentes com `npm run db:deploy`, em `backend/`. Não rodar seed automaticamente em reinício/redeploy. Preparar dados iniciais de demonstração apenas em banco descartável escolhido conscientemente.
+3. Aplicar migrations Turso somente pelo procedimento explícito `db:turso:migrate`; `db:deploy` é local. Não rodar seed ou inicialização automaticamente em reinício/redeploy. Depois de obter a URL HTTPS real da API, configurar `API_PROXY_TARGET` na Vercel e fazer novo deploy do frontend.
 4. Adicionar limites agregados proporcionais de uso da LLM e verificar os limites do provedor. A cota por conversa sozinha não impede abuso.
 5. Validar HTTPS/cookie, login/logout, proxy, timeouts e SSE sem buffering na hospedagem, incluindo reconexão, transferência e recuperação depois de reiniciar a API.
 
-Depois, conforme necessidade, ampliar avaliações da LLM (incluindo baixa confiança controlada), testar corrida simultânea no navegador, completar auditoria de acessibilidade/responsividade e adicionar CI simples. Uma fila geral de chamados e navegação entre conversas antigas são evoluções opcionais; hoje os chamados são acessados pelo painel da conversa. SSO, Redis, PostgreSQL e autoscaling não são requisitos deste desafio.
+Depois, conforme necessidade, ampliar avaliações da LLM (incluindo baixa confiança controlada), testar corrida simultânea no navegador e completar auditoria de acessibilidade/responsividade, mantendo o CI existente. Uma fila geral de chamados e navegação entre conversas antigas são evoluções opcionais; hoje os chamados são acessados pelo painel da conversa. SSO, Redis, PostgreSQL e autoscaling não são requisitos deste desafio.
 
 ## Uso de IA no desenvolvimento
 

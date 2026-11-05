@@ -1,5 +1,7 @@
 # Antes do deploy: o que falta no Nexo Assist
 
+> Relatório histórico de 03/11/2026. Para a integração atual Turso/Render e o frontend já publicado, siga [turso-render.md](turso-render.md) e o [registro de validação](turso-validation.md). Não use as instruções históricas de seed/reset abaixo para reiniciar a API ou preparar o Turso: o seed apaga dados e os comandos locais agora recusam destino remoto.
+
 Relatório de 2026-11-03. Ordem: primeiro o que bloqueia o deploy, depois o que é importante e por fim o que é desejável.
 
 ## 0. Estado atual (ler primeiro)

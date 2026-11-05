@@ -52,7 +52,7 @@ export function createEventStreams({ bus, options = {} }: { bus: EventBus; optio
 
       res.status(200).set({
         "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
+        "Cache-Control": "no-cache, no-store, no-transform",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });

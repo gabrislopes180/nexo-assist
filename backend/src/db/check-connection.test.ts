@@ -52,3 +52,11 @@ it("registra a falha e devolve false quando o banco não abre", async () => {
   assert.equal(errors.length, 1);
   assert.match(errors[0] ?? "", /^Falha ao conectar ao banco de dados/);
 });
+
+it("não registra mensagens de erro que possam conter credenciais", async () => {
+  const { errors, log } = recordingLog();
+  const client = { $queryRaw: () => Promise.reject(new Error("libsql://private-host?authToken=secret-value")) } as unknown as Pick<PrismaClient, "$queryRaw">;
+  assert.equal(await checkDatabaseConnection(client, log), false);
+  assert.ok(!errors.join("\n").includes("secret-value"));
+  assert.ok(!errors.join("\n").includes("private-host"));
+});

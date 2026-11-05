@@ -1,12 +1,9 @@
 import "dotenv/config";
-import { PrismaLibSql } from "@prisma/adapter-libsql";
-import { PrismaClient, type Prisma } from "../generated/prisma/client.js";
+import type { Prisma } from "../generated/prisma/client.js";
+import { createDatabaseClient } from "./client.js";
+import { loadDatabaseConfig } from "./database-config.js";
 
-const adapter = new PrismaLibSql({
-  url: process.env.DATABASE_URL ?? "",
-});
-
-export const prisma = new PrismaClient({ adapter });
+export const prisma = createDatabaseClient(loadDatabaseConfig(process.env));
 
 /** Cliente recebido no callback de `prisma.$transaction`. */
 export type DbTransaction = Prisma.TransactionClient;

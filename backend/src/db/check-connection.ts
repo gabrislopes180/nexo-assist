@@ -1,4 +1,5 @@
 import type { PrismaClient } from "../generated/prisma/client.js";
+import { describeErrorForLog } from "../shared/safe-error.js";
 
 type Log = { log: (message: string) => void; error: (message: string) => void };
 
@@ -12,7 +13,7 @@ export async function checkDatabaseConnection(client: Pick<PrismaClient, "$query
     log.log("Banco de dados conectado");
     return true;
   } catch (error) {
-    log.error(`Falha ao conectar ao banco de dados: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Falha ao conectar ao banco de dados: ${describeErrorForLog(error)}`);
     return false;
   }
 }

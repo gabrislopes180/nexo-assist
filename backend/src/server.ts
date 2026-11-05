@@ -63,6 +63,7 @@ if (config && (await checkDatabaseConnection(prisma))) {
   });
   const server = createApp({ config: config.api, authService: createAuthService(prisma), chatService, consoleService, consoleTicketService, knowledgeService, eventBus }).listen(
     PORT,
+    "0.0.0.0",
     () => {
       console.log(`API rodando em http://localhost:${PORT}`);
     },

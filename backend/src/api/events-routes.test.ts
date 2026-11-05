@@ -226,7 +226,7 @@ describe("tempo real (SSE)", () => {
     it("manda os cabeçalhos de stream, o retry e, primeiro, sync RESYNC com a cabeça do barramento", async () => {
       const { res, sync } = await stream("/console/events", bruno);
       assert.match(res.headers.get("content-type") ?? "", /^text\/event-stream; charset=utf-8$/);
-      assert.equal(res.headers.get("cache-control"), "no-cache, no-transform");
+      assert.equal(res.headers.get("cache-control"), "no-cache, no-store, no-transform");
       assert.equal(res.headers.get("x-accel-buffering"), "no");
       assert.deepEqual(sync.data, { mode: "RESYNC" });
       assert.equal(sync.id, bus.head());
