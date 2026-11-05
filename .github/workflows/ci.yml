@@ -14,6 +14,9 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
 
+    env:
+      API_PROXY_TARGET: http://localhost:8000
+
     defaults:
       run:
         working-directory: frontend
@@ -33,7 +36,9 @@ jobs:
         run: npm ci
 
       - name: Type verification (TypeScript)
-        run: npx tsc --noEmit
+        run: |
+          npx next typegen
+          npx tsc --noEmit
 
       - name: Linter
         run: npm run lint
@@ -43,12 +48,13 @@ jobs:
 
       - name: Building application test
         run: npm run build
-        env:
-          API_PROXY_TARGET: http://localhost:8000
 
   backend:
     name: Backend
     runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: file:./ci.db
 
     defaults:
       run:
