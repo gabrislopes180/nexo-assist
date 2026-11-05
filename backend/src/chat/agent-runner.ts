@@ -1,12 +1,14 @@
 import type { HistoryMessage } from "../conversations/conversation-service.js";
 import type { HandoffProposal, ProposedTicketDraft, TicketLookupResult } from "../shared/chat.js";
 import type { AgentTrace } from "../shared/transparency.js";
+import type { ConfirmableDraft } from "../shared/conversation-draft.js";
 
 /** Fronteira entre o chat e o agent: a API não conhece o Mastra. */
 export type AgentTurnInput = {
   conversationId: string;
   actor: { id: string; name: string };
   history: HistoryMessage[];
+  pendingDraft?: ConfirmableDraft;
   message: string;
   /** Um analista já devolveu esta conversa: informa o contexto de retomada ao agent. */
   returnedFromAnalyst: boolean;

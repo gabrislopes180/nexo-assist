@@ -4,6 +4,7 @@ import { RequestContext } from "@mastra/core/request-context";
 import { handoffProposalSchema, type TicketLookupResult, type TicketSummary } from "../../shared/chat.js";
 import { createTransferToAnalystTool, transferToAnalyst, transferToAnalystInputSchema } from "./transfer-to-analyst.js";
 import { createTurnRecorder, type TurnContextValues, type TurnRecorder } from "./turn-recorder.js";
+import type { ConfirmableDraft } from "../../shared/conversation-draft.js";
 
 const ticket = (code: string, overdue: boolean): TicketSummary => ({
   code,
@@ -26,9 +27,10 @@ type Context = {
   knownCodes?: readonly string[];
   returnedFromAnalyst?: boolean;
   recorder?: TurnRecorder;
+  pendingDraft?: ConfirmableDraft;
 };
 
-function contextOf({ actorId = "marina", message = "", overdueOfferCode = null, offerDeclinedRecently = false, knownCodes = [], returnedFromAnalyst = false, recorder = createTurnRecorder() }: Context = {}) {
+function contextOf({ actorId = "marina", message = "", overdueOfferCode = null, offerDeclinedRecently = false, knownCodes = [], returnedFromAnalyst = false, recorder = createTurnRecorder(), pendingDraft }: Context = {}) {
   const context = new RequestContext<TurnContextValues>();
   if (actorId !== null) context.set("actorId", actorId);
   context.set("message", message);
@@ -37,12 +39,70 @@ function contextOf({ actorId = "marina", message = "", overdueOfferCode = null, 
   context.set("offerDeclinedRecently", offerDeclinedRecently);
   context.set("knownCodes", knownCodes);
   context.set("recorder", recorder);
+  if (pendingDraft) context.set("pendingDraft", pendingDraft);
   return { context, recorder };
 }
 
 const request = { reason: "EMPLOYEE_REQUEST", summary: "Pediu para falar com um analista sobre a VPN." } as const;
 
 describe("transferToAnalyst", () => {
+  const pending: ConfirmableDraft = {
+    kind: "CREATE", draftId: "d1", createdAt: "2026-11-04T15:00:00Z", type: "INC", category: "SOFTWARE", priority: "MEDIUM",
+    priorityReason: "Individual", title: "Integrador do laboratório", description: "Falha de assinatura; reiniciar não resolveu.", affectedScope: "INDIVIDUAL",
+  };
+
+  function acceptedSummary(recorder: TurnRecorder) {
+    const last = recorder.handoffs().at(-1);
+    assert.equal(last?.outcome, "ACCEPTED");
+    return last?.outcome === "ACCEPTED" ? last.proposal.summary : "";
+  }
+
+  it("resumo usa o rascunho atual, impacto e tentativas, sem incorporar o assunto antigo do modelo", async () => {
+    const { context, recorder } = contextOf({ message: "Quero analista", pendingDraft: pending, returnedFromAnalyst: true, knownCodes: ["INC-12"] });
+    await transferToAnalyst({ reason: "EMPLOYEE_REQUEST", summary: "VPN antiga INC-12." }, context);
+    const summary = acceptedSummary(recorder);
+    assert.match(summary, /Integrador do laboratório.*reiniciar não resolveu.*INDIVIDUAL.*não confirmado/);
+    assert.doesNotMatch(summary, /VPN|INC-12/);
+  });
+
+  it("código desconhecido no resumo do modelo continua rejeitado mesmo havendo rascunho", async () => {
+    const { context } = contextOf({ message: "Quero analista", pendingDraft: pending });
+    assert.deepEqual(await transferToAnalyst({ reason: "EMPLOYEE_REQUEST", summary: "INC-99999 de outra pessoa" }, context), { outcome: "REJECTED", problem: "UNKNOWN_TICKET_CODE" });
+  });
+
+  it("enriquecimento não transforma resumo de entrada inválido em proposta válida", async () => {
+    for (const summary of ["", " ", "x".repeat(1001), "x\u0000y"]) {
+      const { context } = contextOf({ message: "Quero analista", pendingDraft: pending });
+      assert.deepEqual(await transferToAnalyst({ reason: "EMPLOYEE_REQUEST", summary }, context), { outcome: "REJECTED", problem: "UNAVAILABLE" });
+    }
+  });
+
+  it("código digitado no relato não validado é omitido do contexto estruturado, sem bloquear pedido legítimo", async () => {
+    const { context, recorder } = contextOf({ message: "Quero analista", pendingDraft: { ...pending, description: "Falha semelhante ao INC-99999 que ouvi mencionar." } });
+    await transferToAnalyst(request, context);
+    const summary = acceptedSummary(recorder);
+    assert.doesNotMatch(summary, /99999/);
+    assert.match(summary, /código não validado/);
+  });
+
+  it("relato longo mantém resumo válido e limitações explícitas sem rascunho", async () => {
+    const withDraft = contextOf({ message: "Quero analista", pendingDraft: { ...pending, title: "Integrador ".repeat(10).trim(), description: "Relato extenso ".repeat(140), affectedDescription: "Departamento ".repeat(30) } });
+    await transferToAnalyst(request, withDraft.context);
+    assert.ok(acceptedSummary(withDraft.recorder).length <= 1000);
+    const without = contextOf({ message: "Quero analista" });
+    await transferToAnalyst({ reason: "EMPLOYEE_REQUEST", summary: "Pediu atendimento." }, without.context);
+    assert.match(acceptedSummary(without.recorder), /Contexto estruturado do problema não disponível/);
+  });
+
+  it("proposta nova no turno substitui rascunho antigo no resumo", async () => {
+    const { context, recorder } = contextOf({ message: "Quero analista", pendingDraft: { ...pending, title: "VPN antiga" } });
+    const { draftId: _id, createdAt: _date, ...proposal } = pending;
+    recorder.recordDraft({ outcome: "DRAFTED", proposal });
+    await transferToAnalyst(request, context);
+    assert.match(acceptedSummary(recorder), /Integrador do laboratório/);
+    assert.doesNotMatch(acceptedSummary(recorder), /VPN antiga/);
+  });
+
   it("pedido do funcionário: aceita e registra a proposta válida, sem gravar", async () => {
     const { context, recorder } = contextOf({ message: "Quero falar com um analista" });
     assert.deepEqual(await transferToAnalyst(request, context), { outcome: "ACCEPTED" });
@@ -227,7 +287,9 @@ describe("transferToAnalyst", () => {
       const proposal = { reason: "LOW_CONFIDENCE", summary: "Impressora falha." } as const;
       assert.deepEqual(await transferToAnalyst(proposal, context), { outcome: "ACCEPTED" });
       const last = recorder.handoffs().at(-1);
-      assert.deepEqual(last, { outcome: "ACCEPTED", proposal });
+      assert.equal(last?.outcome, "ACCEPTED");
+      assert.equal(last?.outcome === "ACCEPTED" ? last.proposal.reason : null, proposal.reason);
+      assert.match(last?.outcome === "ACCEPTED" ? last.proposal.summary : "", /Contexto estruturado do problema não disponível/);
       assert.equal(handoffProposalSchema.safeParse(last?.outcome === "ACCEPTED" ? last.proposal : null).success, true);
     });
 
@@ -235,7 +297,9 @@ describe("transferToAnalyst", () => {
       const accepted = returned("sim", { overdueOfferCode: "INC-20311" });
       const proposal = { reason: "OVERDUE", summary: "INC-20311 vencido." } as const;
       assert.deepEqual(await transferToAnalyst(proposal, accepted.context), { outcome: "ACCEPTED" });
-      assert.deepEqual(accepted.recorder.handoffs().at(-1), { outcome: "ACCEPTED", proposal });
+      const last = accepted.recorder.handoffs().at(-1);
+      assert.equal(last?.outcome === "ACCEPTED" ? last.proposal.reason : null, proposal.reason);
+      assert.match(last?.outcome === "ACCEPTED" ? last.proposal.summary : "", /INC-20311/);
     });
 
     it("OVERDUE sem oferta ou sem aceite continua bloqueado após devolução", async () => {
@@ -304,7 +368,9 @@ describe("transferToAnalyst", () => {
       const { context, recorder } = returned("Não consigo resolver o erro");
       const proposal = { reason: "LOW_CONFIDENCE", summary: "Erro sem diagnóstico." } as const;
       assert.deepEqual(await tool.execute?.(proposal, { requestContext: context as RequestContext }), { outcome: "ACCEPTED" });
-      assert.deepEqual(recorder.handoffs().at(-1), { outcome: "ACCEPTED", proposal });
+      const last = recorder.handoffs().at(-1);
+      assert.equal(last?.outcome === "ACCEPTED" ? last.proposal.reason : null, proposal.reason);
+      assert.match(last?.outcome === "ACCEPTED" ? last.proposal.summary : "", /Erro sem diagnóstico/);
     });
   });
 

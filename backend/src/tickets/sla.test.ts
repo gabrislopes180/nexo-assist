@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import {
   SLA_BY_PRIORITY,
   SLA_ELAPSED_BOUNDS_HOURS,
   addBusinessMinutes,
   computeDueAt,
+  formatLocalDateTime,
   isOverdue,
 } from "./sla.js";
 
@@ -21,12 +23,25 @@ describe("addBusinessMinutes / computeDueAt", () => {
     ["Alta seg 18:00 começa fora do expediente", "HIGH", "2026-11-09T18:00", "2026-11-10T12:00"],
     ["Alta ter 07:00 antes do expediente", "HIGH", "2026-11-10T07:00", "2026-11-10T12:00"],
     ["Alta sex 17:00 atravessa o fim de semana", "HIGH", "2026-11-13T17:00", "2026-11-16T11:00"],
+    ["Alta sex 14:00 ainda termina na sexta", "HIGH", "2026-11-13T14:00", "2026-11-13T18:00"],
+    ["Alta sex 18:00 começa na segunda", "HIGH", "2026-11-13T18:00", "2026-11-16T12:00"],
+    ["Alta sex 23:30 não consome prazo à noite", "HIGH", "2026-11-13T23:30", "2026-11-16T12:00"],
     ["Alta sáb 09:00", "HIGH", "2026-11-14T09:00", "2026-11-16T12:00"],
+    ["Alta dom 23:59", "HIGH", "2026-11-15T23:59", "2026-11-16T12:00"],
+    ["Alta atravessa mês e ano sem descontar feriados", "HIGH", "2026-12-31T17:00", "2027-01-01T11:00"],
+    ["Alta atravessa fevereiro em ano bissexto", "HIGH", "2028-02-28T17:00", "2028-02-29T11:00"],
+    ["Média acumula 30h, e não avança três datas úteis", "MEDIUM", "2026-11-09T08:00", "2026-11-11T18:00"],
     ["Média qua 15:00", "MEDIUM", "2026-11-11T15:00", "2026-11-16T15:00"],
     ["Média ter 19:30", "MEDIUM", "2026-11-10T19:30", "2026-11-13T18:00"],
     ["Média sex 18:30", "MEDIUM", "2026-11-13T18:30", "2026-11-18T18:00"],
     ["Baixa seg 09:00", "LOW", "2026-11-09T09:00", "2026-11-16T09:00"],
+    ["Baixa acumula 50h de expediente", "LOW", "2026-11-09T08:00", "2026-11-13T18:00"],
+    ["Baixa sex 18:00", "LOW", "2026-11-13T18:00", "2026-11-20T18:00"],
+    ["Crítica sex 17:00 termina no fechamento", "CRITICAL", "2026-11-13T17:00", "2026-11-13T18:00"],
+    ["Crítica sex 18:00 não espera o expediente", "CRITICAL", "2026-11-13T18:00", "2026-11-13T19:00"],
+    ["Crítica sex 23:30 atravessa a data e entra no sábado", "CRITICAL", "2026-11-13T23:30", "2026-11-14T00:30"],
     ["Crítica sáb 03:00 é tempo corrido", "CRITICAL", "2026-11-14T03:00", "2026-11-14T04:00"],
+    ["Crítica dom 23:30 termina antes da abertura", "CRITICAL", "2026-11-15T23:30", "2026-11-16T00:30"],
   ];
 
   for (const [name, priority, from, expected] of cases) {
@@ -61,10 +76,52 @@ describe("addBusinessMinutes / computeDueAt", () => {
     assert.equal(addBusinessMinutes(from, 60).toISOString(), "2026-11-09T14:00:30.500Z");
   });
 
+  it("preserva frações de segundo no saldo que atravessa a sexta-feira", () => {
+    const from = new Date("2026-11-13T17:59:59.500-03:00");
+    assert.equal(computeDueAt("HIGH", from).toISOString(), "2026-11-16T14:59:59.500Z");
+  });
+
   it("não altera a data de entrada", () => {
     const from = sp("2026-11-09T10:00");
     addBusinessMinutes(from, 60);
     assert.equal(from.toISOString(), sp("2026-11-09T10:00").toISOString());
+  });
+});
+
+describe("fuso operacional independente do servidor", () => {
+  for (const timezone of ["UTC", "America/Los_Angeles", "Asia/Tokyo"]) {
+    it(`calcula e formata em UTC-3 mesmo com servidor em ${timezone}`, () => {
+      // Cada processo inicia com outro TZ, sem alterar o ambiente dos demais testes.
+      const script = `
+        import { computeDueAt, formatLocalDateTime } from ${JSON.stringify(new URL("./sla.ts", import.meta.url).href)};
+        const high = computeDueAt("HIGH", new Date("2026-11-13T20:00:00.000Z"));
+        console.log(JSON.stringify({
+          high: high.toISOString(),
+          critical: computeDueAt("CRITICAL", new Date("2026-11-14T02:30:00.000Z")).toISOString(),
+          medium: computeDueAt("MEDIUM", new Date("2026-11-09T11:00:00.000Z")).toISOString(),
+          low: computeDueAt("LOW", new Date("2026-11-09T11:00:00.000Z")).toISOString(),
+          display: formatLocalDateTime(high),
+          previousLocalDate: formatLocalDateTime(new Date("2027-01-01T02:30:00.000Z")),
+        }));
+      `;
+      const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+        cwd: new URL("../../", import.meta.url),
+        env: { ...process.env, TZ: timezone }, encoding: "utf8", timeout: 15000,
+      });
+      assert.equal(result.status, 0, result.stderr || result.error?.message || "Falha no processo de teste de fuso");
+      assert.deepEqual(JSON.parse(result.stdout), {
+        high: "2026-11-16T14:00:00.000Z",
+        critical: "2026-11-14T03:30:00.000Z",
+        medium: "2026-11-11T21:00:00.000Z",
+        low: "2026-11-13T21:00:00.000Z",
+        display: "16/11 às 11:00",
+        previousLocalDate: "31/12 às 23:30",
+      });
+    });
+  }
+
+  it("formata a data local quando a data UTC já é a seguinte", () => {
+    assert.equal(formatLocalDateTime(new Date("2026-11-14T02:30:00.000Z")), "13/11 às 23:30");
   });
 });
 
@@ -112,6 +169,10 @@ describe("isOverdue", () => {
   });
   it("não vencido quando dueAt == now", () => {
     assert.equal(isOverdue({ dueAt: now }, now), false);
+  });
+  it("só vence depois do instante limite, com precisão de milissegundos", () => {
+    assert.equal(isOverdue({ dueAt: now }, new Date(now.getTime() - 1)), false);
+    assert.equal(isOverdue({ dueAt: now }, new Date(now.getTime() + 1)), true);
   });
   it("sem prazo nunca está vencido", () => {
     assert.equal(isOverdue({ dueAt: null }, now), false);

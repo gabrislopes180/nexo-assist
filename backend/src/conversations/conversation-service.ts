@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "../generated/prisma/client.js";
 import type { ConversationStatus, MessageAuthorType } from "../generated/prisma/enums.js";
 import type { ConfirmDraftRequest, HandoffProposal, ProposedTicketDraft, TicketLookupResult } from "../shared/chat.js";
-import type { ConfirmableDraft } from "../shared/conversation-draft.js";
+import { confirmableDraftSchema, type ConfirmableDraft } from "../shared/conversation-draft.js";
 import { noopPublisher, type ChangePublisher, type ConversationChange } from "../shared/conversation-events.js";
 import { describeErrorForLog } from "../shared/safe-error.js";
 import type { AgentTrace } from "../shared/transparency.js";
@@ -51,6 +51,8 @@ export type TurnReservation = {
   /** Preenchido se um analista já devolveu esta conversa ao agent. */
   returnedToAgentAt: Date | null;
   history: HistoryMessage[];
+  /** Snapshot do rascunho atual do próprio dono, para o resumo de transferência. */
+  pendingDraft?: ConfirmableDraft;
 };
 
 /** Com o agent, o turno vai à LLM; com analista, a mensagem só é gravada. */
@@ -158,7 +160,7 @@ async function continueConversationTurn(
   now: Date,
 ): Promise<TurnStart> {
   const where = { id: conversationId, ownerId };
-  const select = { status: true, messageCount: true, lastMessageAt: true, returnedToAgentAt: true } as const;
+  const select = { status: true, messageCount: true, lastMessageAt: true, returnedToAgentAt: true, pendingDraft: true } as const;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const current = await client.conversation.findFirst({ where, select });
@@ -177,6 +179,7 @@ async function continueConversationTurn(
         await client.message.create({ data: employeeMessageData(conversationId, ownerId, content, now), select: timelineMessageSelect }),
       );
       const updated = await client.conversation.findFirstOrThrow({ where, select });
+      const pending = confirmableDraftSchema.safeParse(current.pendingDraft);
       return {
         kind: "AGENT_TURN",
         reservation: {
@@ -189,6 +192,7 @@ async function continueConversationTurn(
           previousLastMessageAt: current.lastMessageAt,
           returnedToAgentAt: current.returnedToAgentAt,
           history,
+          ...(pending.success ? { pendingDraft: pending.data } : {}),
         },
       };
     }

@@ -27,6 +27,8 @@ export const llmDecisionSchema = z.object({
   redirectTo: z.enum(REDIRECT_AREAS).nullable().optional(),
   /** Slug do artigo em que a resposta se baseou. O código só aceita slug devolvido por searchHelpCenter neste turno. */
   articleSlug: z.string().nullable().optional(),
+  /** Resposta direta sobre aplicabilidade, separada da proposta que o código renderiza. */
+  articleAnswer: z.string().max(600).nullable().optional(),
 });
 
 /** Campo inválido cai para undefined e recebe fallback; só sem `content` não há decisão. */
@@ -39,6 +41,7 @@ const lenientDecisionSchema = z.object({
   redirectTo: z.enum(REDIRECT_AREAS).nullable().optional().catch(undefined),
   // Sem regex aqui: slug fora do formato chega a `withCitation` e é descartado com motivo no trace.
   articleSlug: z.string().max(200).nullable().optional().catch(undefined),
+  articleAnswer: z.string().max(600).nullable().optional().catch(undefined),
 });
 
 export type LlmDecision = z.infer<typeof lenientDecisionSchema>;
@@ -461,7 +464,7 @@ export function relatedCodeFrom(agentMessages: readonly string[]): string | null
     const expired = WINDOW_EXPIRED_NOTICE.exec(content);
     // Só as etapas da própria abertura mantêm a relação; qualquer outra resposta encerra o assunto.
     const isCreationStep = content === AFFECTED_QUESTION || codesShownAsDuplicates([content]).length > 0;
-    if (expired?.[1]) related = expired[1];
+    if (expired?.[1]) related = content.includes(CREATE_PROPOSAL_NOTICE) ? null : expired[1];
     else if (!isCreationStep || content.includes(CREATE_PROPOSAL_NOTICE)) related = null;
   }
   return related;
@@ -595,6 +598,27 @@ function withoutAnalystPrefix(text: string): string {
   return text.replace(ANALYST_PREFIX, "").trim();
 }
 
+/** Preserva informação essencial anterior à última proposta, sem concatenar resultados ou texto de ações da LLM. */
+function withEssentialContext(reply: AgentTurnResult, input: ReplyInput): AgentTurnResult {
+  const lastDraft = input.drafts.at(-1);
+  const expired = input.drafts.findLast((execution) => execution.outcome === "REOPEN_BLOCKED" && execution.block.kind === "WINDOW_EXPIRED");
+  let result = reply;
+  if (expired?.outcome === "REOPEN_BLOCKED" && expired.block.kind === "WINDOW_EXPIRED" && expired !== lastDraft) {
+    const notice = `O ${expired.block.ticket.code} foi resolvido há mais de 7 dias e não pode mais ser reaberto.`;
+    result = { ...result, content: `${notice} ${result.content}`, trace: { ...result.trace, reason: `${REOPEN_BLOCK_SUMMARY.WINDOW_EXPIRED} ${result.trace.reason}` } };
+  }
+  const answer = withoutAnalystPrefix(input.decision?.articleAnswer ?? "");
+  const article = foundArticles(input.articleSearches ?? []).find(({ slug }) => slug === input.decision?.articleSlug);
+  // Só uma resposta informativa com fonte deste turno. Não aceitar códigos ou afirmações de escrita/transferência nesse canal.
+  if (!article || !answer || claimsFalseAction(answer) || ticketCodesIn(answer).length > 0 || answer.includes("Fonte:")) return result;
+  return {
+    ...result,
+    content: `${answer} ${result.content} Referência de aplicabilidade: ${article.title} (central de ajuda).`,
+    trace: { ...result.trace, sources: [{ kind: "ARTICLE", slug: article.slug, title: article.title }] },
+    // A proposta conserva seus controles; informar uma restrição não oferece "Resolveu"/"Não resolveu".
+  };
+}
+
 /** Null: não há resposta aproveitável, e o runner trata como agent indisponível. */
 export function composeReply(input: ReplyInput): AgentTurnResult | null {
   const { message, decision, fallbackText, executions, drafts, handoffs = [], articleSearches = [], overdueOfferActive = false, suppressOverdueOffer = false } = input;
@@ -640,7 +664,7 @@ export function composeReply(input: ReplyInput): AgentTurnResult | null {
   const block = createBlock(drafts.at(-1));
   if (block) {
     const blockTrace: AgentTrace = { ...trace, intent: block.intent, reason: block.reason };
-    return { content: block.content, trace: blockTrace, ticketLookup, ticketDraft: null, quickReplies: block.quickReplies };
+    return withEssentialContext({ content: block.content, trace: blockTrace, ticketLookup, ticketDraft: null, quickReplies: block.quickReplies }, input);
   }
 
   // A proposta é real: o texto vem do código, para nunca prometer mais do que ela.
@@ -648,11 +672,11 @@ export function composeReply(input: ReplyInput): AgentTurnResult | null {
   if (lastDraft?.outcome === "DRAFTED") {
     const { proposal } = lastDraft;
     const intent = proposal.kind === "CREATE" ? "OPEN_TICKET" : proposal.kind === "REOPEN" ? "REOPEN" : "COMPLEMENT";
-    return { content: proposalText(proposal), trace: { ...trace, intent }, ticketLookup, ticketDraft: proposal };
+    return withEssentialContext({ content: proposalText(proposal), trace: { ...trace, intent }, ticketLookup, ticketDraft: proposal }, input);
   }
   if (lastDraft?.outcome === "TICKET_NOT_AVAILABLE" || lastDraft?.outcome === "SERVICE_UNAVAILABLE") {
     const { content, reason } = DRAFT_FAILURE[lastDraft.outcome];
-    return { content, trace: { ...trace, confidence: "LOW", reason }, ticketLookup, ticketDraft: null };
+    return withEssentialContext({ content, trace: { ...trace, confidence: "LOW", reason }, ticketLookup, ticketDraft: null }, input);
   }
 
   const raw = withoutAnalystPrefix(decision ? decision.content : fallbackText);

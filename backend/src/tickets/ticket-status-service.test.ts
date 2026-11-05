@@ -130,6 +130,38 @@ describe("TicketStatusService", () => {
       assert.equal((await service.getDetail("INC-1", T2)).overdue, true);
     });
 
+    it("prazo persistido de sexta 17h vence segunda 11h e todas as leituras concordam", async () => {
+      const friday = new Date("2026-11-13T17:00:00-03:00");
+      const due = "2026-11-16T14:00:00.000Z"; // Segunda 11h no expediente UTC-3.
+      await createTicket({ priority: "HIGH", at: friday });
+      assert.equal((await ticketOf()).dueAt?.toISOString(), due);
+      assert.equal((await eventsOf())[0]?.dueAt?.toISOString(), due);
+      const tickets = createTicketService(client);
+      for (const [instant, overdue] of [
+        ["2026-11-14T12:00:00-03:00", false],
+        [due, false],
+        ["2026-11-16T14:00:00.001Z", true],
+      ] as const) {
+        const now = new Date(instant);
+        const detail = await service.getDetail("INC-1", now);
+        const lookup = await tickets.lookupOpenTickets(ownerId, { code: "INC-1" }, now);
+        const owned = await tickets.listOwnerTickets(ownerId, now);
+        const byCode = await tickets.findOpenTicketByCode(ownerId, "INC-1", now);
+        for (const view of [detail, lookup.tickets[0], owned[0], byCode]) {
+          assert.equal(view?.dueAt, due, instant);
+          assert.equal(view?.overdue, overdue, instant);
+        }
+      }
+
+      const updatedAt = new Date("2026-11-16T11:30:00-03:00");
+      await change({ toStatus: "IN_PROGRESS", expectedStatus: "WAITING_ANALYST", now: updatedAt });
+      const detail = await service.getDetail("INC-1", updatedAt);
+      assert.equal(detail.slaStartedAt, updatedAt.toISOString());
+      assert.equal(detail.dueAt, "2026-11-16T18:30:00.000Z"); // 15h30 local: próxima atualização.
+      assert.equal(detail.events.at(-1)?.dueAt, detail.dueAt);
+      assert.equal(detail.overdue, false);
+    });
+
     it("chamado inexistente lança TicketNotFoundError", async () => {
       await assert.rejects(service.getDetail("INC-404", T1), TicketNotFoundError);
     });

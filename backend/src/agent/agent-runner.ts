@@ -76,6 +76,7 @@ export function createAgentRunner({ timeoutMs = DEFAULT_AGENT_TIMEOUT_MS, onTurn
       requestContext.set("offerDeclinedRecently", offerDeclinedIn(input.history));
       requestContext.set("knownCodes", knownCodesFrom(input.history));
       requestContext.set("returnedFromAnalyst", input.returnedFromAnalyst);
+      if (input.pendingDraft) requestContext.set("pendingDraft", input.pendingDraft);
       requestContext.set("triedArticle", triedArticleFrom(input.history, input.message));
       requestContext.set("recorder", recorder);
 

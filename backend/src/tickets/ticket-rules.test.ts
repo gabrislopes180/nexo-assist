@@ -119,6 +119,78 @@ describe("initialTimeline", () => {
   });
 });
 
+describe("janelas de primeira resposta e atualização nos limites do expediente", () => {
+  const friday = sp("2026-11-13T17:00");
+  const mondayDue = sp("2026-11-16T11:00");
+
+  it("criação na sexta 17h inicia a primeira resposta para segunda 11h", () => {
+    const { next, eventDueAt } = initialTimeline({ type: "INC", priority: "HIGH", at: friday });
+    assert.deepEqual(next.slaStartedAt, friday);
+    assert.deepEqual(next.dueAt, mondayDue);
+    assert.deepEqual(eventDueAt, mondayDue);
+  });
+
+  for (const event of [
+    { type: "COMMENT", actorType: "ANALYST", at: friday },
+    { type: "STATUS_CHANGED", actorType: "ANALYST", at: friday, toStatus: "IN_PROGRESS" },
+    { type: "STATUS_CHANGED", actorType: "ANALYST", at: friday, toStatus: "APPROVED" },
+  ] satisfies TicketEventInput[]) {
+    it(`${event.type}${"toStatus" in event ? ` para ${event.toStatus}` : " do analista"} na sexta 17h inicia a próxima atualização para segunda 11h`, () => {
+      const start = created("REQ", "HIGH", sp("2026-11-13T08:00"));
+      assert.deepEqual(start.dueAt, sp("2026-11-13T12:00")); // A janela anterior já venceu.
+      const { next, eventDueAt } = apply(start, event);
+      assert.deepEqual(next.slaStartedAt, friday);
+      assert.deepEqual(next.dueAt, mondayDue);
+      assert.deepEqual(eventDueAt, mondayDue);
+    });
+  }
+
+  it("complemento do funcionário ou transferência não apagam o vencimento na sexta", () => {
+    const start = created("INC", "HIGH", sp("2026-11-13T08:00"));
+    for (const event of [
+      { type: "COMMENT", actorType: "EMPLOYEE", at: friday },
+      { type: "COMMENT", actorType: "AGENT", at: friday },
+      { type: "TRANSFERRED", actorType: "AGENT", at: friday },
+    ] satisfies TicketEventInput[]) {
+      const { next, eventDueAt } = apply(start, event);
+      assert.deepEqual(next.dueAt, sp("2026-11-13T12:00"));
+      assert.deepEqual(next.slaStartedAt, start.slaStartedAt);
+      assert.equal(eventDueAt, null);
+    }
+  });
+
+  it("resposta do funcionário após pausa inicia janela cheia, sem reaproveitar saldo", () => {
+    const start = created("INC", "HIGH", sp("2026-11-13T08:00"));
+    const paused = pause(start, sp("2026-11-13T11:00"));
+    assert.equal(paused.dueAt, null);
+    const comment = apply(paused, { type: "COMMENT", actorType: "EMPLOYEE", at: friday });
+    assert.equal(comment.next.dueAt, null);
+    const { next, eventDueAt } = apply(comment.next, { type: "STATUS_CHANGED", actorType: "SYSTEM", at: friday, toStatus: "WAITING_ANALYST" });
+    assert.deepEqual(next.slaStartedAt, friday);
+    assert.deepEqual(next.dueAt, mondayDue);
+    assert.deepEqual(eventDueAt, mondayDue);
+  });
+
+  it("reabertura no domingo à noite espera segunda 8h e vence às 12h", () => {
+    const resolved = apply(created("INC", "HIGH", sp("2026-11-13T08:00")), {
+      type: "STATUS_CHANGED", actorType: "ANALYST", at: sp("2026-11-13T10:00"), toStatus: "RESOLVED",
+    }).next;
+    const at = sp("2026-11-15T23:30");
+    const { next, eventDueAt } = apply(resolved, { type: "REOPENED", actorType: "EMPLOYEE", at });
+    assert.deepEqual(next.slaStartedAt, at);
+    assert.deepEqual(next.dueAt, sp("2026-11-16T12:00"));
+    assert.deepEqual(eventDueAt, next.dueAt);
+  });
+
+  it("atualização crítica no domingo 23h30 renova em uma hora corrida", () => {
+    const at = sp("2026-11-15T23:30");
+    const { next, eventDueAt } = apply(created("INC", "CRITICAL", sp("2026-11-13T17:00")), { type: "COMMENT", actorType: "ANALYST", at });
+    assert.deepEqual(next.slaStartedAt, at);
+    assert.deepEqual(next.dueAt, sp("2026-11-16T00:30"));
+    assert.deepEqual(eventDueAt, next.dueAt);
+  });
+});
+
 describe("applyTicketEvent", () => {
   it("STATUS_CHANGED por analista para IN_PROGRESS renova o prazo", () => {
     const at = sp("2026-11-09T12:00");

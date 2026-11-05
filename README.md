@@ -192,6 +192,10 @@ A conversa vai para a fila dos analistas (`status: WAITING_ANALYST`) em dois cas
 - **O agent decide transferir:** pedido do funcionário, chamado vencido aceito pela pessoa, ou baixa confiança. A transferência acontece junto com a resposta do agent.
 - **Confirmação de chamado com prioridade final `CRITICAL`:** a transferência é automática, com um resumo montado pelo backend.
 
+O resumo da tool usa o rascunho atual da própria conversa, quando disponível: problema, relato/tentativas, impacto informado e confirmação pendente. Uma proposta nova substitui esse contexto; assuntos antigos não são anexados. Sem esse contexto estruturado, o resumo do modelo é mantido com uma limitação explícita para o analista consultar o histórico. Códigos desconhecidos continuam rejeitados, e códigos não validados dentro de relatos não são apresentados como chamados autorizados. A transferência e o descarte do rascunho continuam na mesma transação, sem chamada adicional à LLM. O console exibe o campo persistido em “Resumo da última transferência”; a devolução limpa esse campo, conforme a regra existente.
+
+Na composição de respostas com várias tools, um bloqueio de reabertura por mais de sete dias permanece no texto antes da pergunta ou proposta de abertura seguinte. Dúvidas sobre aplicabilidade de artigo têm um campo interno `articleAnswer`, informado pela LLM a partir do artigo encontrado no turno: sua explicação acompanha a proposta/duplicidade e conserva o card da fonte, sem oferecer “Resolveu” para um procedimento que não foi recomendado. As condições continuam dependendo da interpretação do modelo; as guardas de código, confirmação e persistência são aplicadas pelo backend.
+
 Em qualquer caso, o rascunho pendente é descartado e a conversa ganha a mensagem `SYSTEM` "Transferida para um analista". O `conversation.status` de `POST /chat` e da confirmação reflete o estado depois da operação. A mensagem `SYSTEM` não vem nessas respostas: ela chega pelo tempo real (`message.created`) e já está no histórico de `GET /chat/conversations/:id`. Quando `status` chega como `WAITING_ANALYST`, o frontend mostra um aviso, sem travar o composer.
 
 Enquanto a conversa está com analista (`WAITING_ANALYST` ou `WITH_ANALYST`), `POST /chat` com o `conversationId` só grava a mensagem do funcionário, sem chamar o LLM, e responde `200` com `message: null`.
@@ -292,6 +296,39 @@ O seed traz conversas com ids fixos para demonstração:
 | `seed-conv-with-analyst` | Rafael | Atendida pelo Bruno (`WITH_ANALYST`), com o INC-20405 ainda aguardando analista |
 
 O dono de `seed-conv-with-analyst` é o Rafael, que é analista, então ela só serve para o console. É a conversa da demo de [Chamados no console](#chamados-no-console): o Bruno assumiu, mas ainda não mexeu no chamado.
+
+## Prazos de atendimento (SLA)
+
+O Anexo A exige os prazos abaixo para a **primeira resposta e cada atualização**, em vez de um prazo único de resolução. Como referência operacional, adotamos o expediente do exemplo do Anexo B: **segunda a sexta, das 8h às 18h**, com **plantão 24h para crítica**.
+
+| Prioridade | Prazo do Anexo A | Contagem adotada |
+|---|---|---|
+| Crítica | 1 hora | 60 minutos corridos, inclusive noites, fins de semana e virada de data |
+| Alta | 4 horas úteis | 240 minutos acumulados apenas no expediente |
+| Média | 3 dias úteis | 30 horas acumuladas de expediente (3 × 10h) |
+| Baixa | 5 dias úteis | 50 horas acumuladas de expediente (5 × 10h) |
+
+**Convenções de calendário:** o PRD não define a conversão de dias úteis. Preservamos a interpretação existente de acumular horas de expediente, coerente com a contagem da alta, sem avançar simplesmente três ou cinco datas úteis. Assim, uma média aberta segunda às 8h vence quarta às 18h; uma baixa, sexta às 18h. Fora do expediente, o saldo começa no próximo dia útil às 8h. Uma alta aberta sexta às 17h consome 1h na sexta e 3h na segunda, vencendo **segunda às 11h**. Às 18h não começa contagem nova, mas um prazo pode terminar exatamente nesse horário.
+
+**Fuso e feriados:** o calendário usa **UTC−3 fixo**, referência operacional de São Paulo, com cálculos por timestamp e métodos UTC; não depende do fuso do servidor. Não implementamos regras históricas de horário de verão. As datas persistidas e da API são instantes UTC/ISO com `Z`; mensagens geradas pelo backend formatam o horário em UTC−3, enquanto os cards da interface exibem no fuso do navegador, sem recalcular o SLA. Não há calendário de feriados: segunda a sexta contam mesmo em feriados, inclusive 1º de janeiro se cair em dia de semana. São escolhas operacionais para o desafio, não exigências explícitas do PRD.
+
+**Eventos do prazo:** como o PRD não enumera quais atualizações renovam o SLA, o motor usa eventos do chamado para representar a primeira resposta e a próxima atualização do suporte:
+
+| Evento | Efeito no prazo |
+|---|---|
+| `CREATED`, na confirmação da abertura | Inicia a primeira janela; preparar um rascunho não inicia o SLA. O prazo do rascunho é uma prévia |
+| `STATUS_CHANGED` para `IN_PROGRESS` ou `APPROVED` | Inicia janela cheia a partir da mudança, inclusive se a anterior venceu |
+| `COMMENT` do analista, com prazo ativo | Inicia janela cheia para a próxima atualização |
+| `STATUS_CHANGED` para `WAITING_EMPLOYEE` | Pausa: `slaStartedAt` e `dueAt` ficam null |
+| Complemento confirmado pelo funcionário em `WAITING_EMPLOYEE` | Gera retorno automático para `WAITING_ANALYST` e janela cheia a partir da confirmação; não reaproveita saldo anterior |
+| `REOPENED`, na confirmação da reabertura | Inicia janela cheia, mantendo a prioridade |
+| `STATUS_CHANGED` para `RESOLVED` | Encerra o SLA ativo e limpa o prazo |
+| Demais comentários do funcionário/agent, comentário do analista durante pausa ou `TRANSFERRED` | Não renovam nem reativam o prazo |
+| `PRIORITY_CHANGED` | Com SLA pausado, só muda a prioridade. Elevar usa o menor entre o prazo atual e o calculado desde a mudança; rebaixar recalcula desde `slaStartedAt`, sem iniciar outra janela |
+
+Essa distinção impede que um complemento do funcionário adie a resposta devida pelo suporte. `updatedAt` sozinho não renova o SLA. Uma mensagem do analista na **conversa** também não cria um comentário no **chamado**, pois não há associação obrigatória entre ambos. O console atual atualiza chamados por mudanças de status; comentários do analista e mudanças de prioridade já são tratados no motor/histórico, mas não têm ações próprias na interface.
+
+**Vencimento e transferência:** o chamado fica vencido apenas quando `now > dueAt`; no instante exato ainda está no prazo. Prazo null (pausado ou resolvido) nunca está vencido. Chat e console usam a mesma regra. Na consulta de um único chamado vencido, o agent acrescenta a oferta de analista; a transferência por `OVERDUE` exige o aceite dessa oferta na resposta seguinte e respeita recusas atuais ou recentes. Uma lista com vários chamados não dispara essa oferta específica. A transferência automática na confirmação de um chamado crítico é uma regra separada do vencimento. Os testes usam relógios fixos e modelo fake, incluindo limites de milissegundos e execução com diferentes fusos de servidor.
 
 ## Console do analista
 

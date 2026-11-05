@@ -280,6 +280,11 @@ const proposedTicket = (reply: AgentTurnResult) => reply.trace.actions.some((act
 const helpButtons = (reply: AgentTurnResult) => JSON.stringify(reply.quickReplies) === JSON.stringify(HELP_QUICK_REPLIES);
 
 const HELP_CASES: readonly HelpCase[] = [
+  {
+    name: "aplicabilidade Windows 11: responde restrição antes da proposta, com fonte",
+    message: "No Windows 11 minha VPN dá erro 809 só comigo. O procedimento da central se aplica ao Windows 11?",
+    check: (reply, searches) => searches.length > 0 && citedSlug(reply) === "vpn-erro-809" && /apenas|somente|não.*aplica/i.test(reply.content) && /Windows 10/i.test(reply.content) && proposedTicket(reply) && !helpButtons(reply) && !/reinstal/i.test(reply.content),
+  },
   { name: "cita vpn-erro-809", message: VPN_QUESTION, check: (reply) => citedSlug(reply) === "vpn-erro-809" && helpButtons(reply) },
   {
     name: "Windows 11 segue para abertura",

@@ -257,6 +257,16 @@ export function ConsoleThread({
           ) : undefined
         }
       />
+      {conversation.handoffSummary ? (
+        <details open className="shrink-0 border-b border-rule bg-paper px-5 py-3">
+          <summary className="cursor-pointer text-small font-medium text-ink">
+            Resumo da última transferência
+          </summary>
+          <p className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-small text-ink-2">
+            {conversation.handoffSummary}
+          </p>
+        </details>
+      ) : null}
       <div
         ref={scrollRef}
         role="log"

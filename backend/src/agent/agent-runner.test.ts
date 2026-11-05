@@ -10,6 +10,8 @@ import { articleNote, HELP_QUICK_REPLIES, overdueOfferCodeFrom, overdueOfferText
 import { KnowledgeUnavailableError } from "../knowledge/knowledge-service.js";
 import { buildInstructions } from "./instructions.js";
 import type { HelpArticle } from "../shared/knowledge.js";
+import { toTicketSummary } from "../tickets/ticket-matching.js";
+import { initialTimeline } from "../tickets/ticket-rules.js";
 
 const ticket = (code: string): TicketSummary => ({
   code,
@@ -463,7 +465,8 @@ describe("decisões do agent (modelo fake)", () => {
     it("pedido direto: transfere com template, sem rascunho nem respostas rápidas", async () => {
       const { runner } = setup([transfer({ reason: "EMPLOYEE_REQUEST", summary: "Pediu para falar com um analista." }), say("Pronto!")]);
       const result = await runner.runTurn(input("Quero falar com um analista"));
-      assert.deepEqual(result.handoff, { reason: "EMPLOYEE_REQUEST", summary: "Pediu para falar com um analista." });
+      assert.equal(result.handoff?.reason, "EMPLOYEE_REQUEST");
+      assert.match(result.handoff?.summary ?? "", /Pediu para falar com um analista.*Contexto estruturado do problema não disponível/);
       assert.equal(result.content, "Transferi a conversa para um analista. Ele vai continuar o atendimento por aqui.");
       assert.equal(result.ticketDraft, null);
       assert.equal(result.quickReplies, null);
@@ -491,6 +494,42 @@ describe("decisões do agent (modelo fake)", () => {
       const result = await runner.runTurn(input("Como está o INC-20311?"));
       assert.ok(!/analista\?/.test(result.content));
       assert.equal(result.quickReplies, null);
+    });
+
+    describe("oferta por vencimento usa o SLA calculado, sem LLM real", () => {
+      for (const { priority, createdAt, expectedDue, instant, overdue } of [
+        { priority: "HIGH", createdAt: "2026-11-13T17:00:00-03:00", expectedDue: "2026-11-16T14:00:00.000Z", instant: "2026-11-14T12:00:00-03:00", overdue: false },
+        { priority: "HIGH", createdAt: "2026-11-13T17:00:00-03:00", expectedDue: "2026-11-16T14:00:00.000Z", instant: "2026-11-16T14:00:00.000Z", overdue: false },
+        { priority: "HIGH", createdAt: "2026-11-13T17:00:00-03:00", expectedDue: "2026-11-16T14:00:00.000Z", instant: "2026-11-16T14:00:00.001Z", overdue: true },
+        { priority: "CRITICAL", createdAt: "2026-11-13T23:30:00-03:00", expectedDue: "2026-11-14T03:30:00.000Z", instant: "2026-11-14T03:29:59.999Z", overdue: false },
+        { priority: "CRITICAL", createdAt: "2026-11-13T23:30:00-03:00", expectedDue: "2026-11-14T03:30:00.000Z", instant: "2026-11-14T03:30:00.000Z", overdue: false },
+        { priority: "CRITICAL", createdAt: "2026-11-13T23:30:00-03:00", expectedDue: "2026-11-14T03:30:00.000Z", instant: "2026-11-14T03:30:00.001Z", overdue: true },
+        { priority: "MEDIUM", createdAt: "2026-11-09T08:00:00-03:00", expectedDue: "2026-11-11T21:00:00.000Z", instant: "2026-11-11T21:00:00.001Z", overdue: true },
+        { priority: "LOW", createdAt: "2026-11-09T08:00:00-03:00", expectedDue: "2026-11-13T21:00:00.000Z", instant: "2026-11-13T21:00:00.001Z", overdue: true },
+      ] as const) {
+        it(`${priority} em ${instant}: ${overdue ? "vencido com oferta" : "no prazo sem oferta"}`, async () => {
+          const at = new Date(createdAt);
+          const { next } = initialTimeline({ type: "INC", priority, at });
+          assert.equal(next.dueAt?.toISOString(), expectedDue);
+          const summary = toTicketSummary({
+            code: "INC-20311", type: "INC", category: "HARDWARE", priority,
+            status: "WAITING_ANALYST", title: "Equipamento não funciona", description: "Falha no equipamento.",
+            createdAt: at, dueAt: next.dueAt,
+          }, new Date(instant));
+          const lookup: TicketLookupResult = { outcome: "SINGLE_MATCH", openTicketCount: 1, totalMatches: 1, tickets: [summary] };
+          const { runner } = setup([
+            { kind: "tool", input: { code: "INC-20311" } },
+            { kind: "text", text: decisionJson(templateFor(lookup)) },
+          ], { tickets: () => Promise.resolve(lookup) });
+          const result = await runner.runTurn(input("Como está o INC-20311?"));
+          assert.equal(result.ticketLookup?.tickets[0]?.dueAt, expectedDue);
+          assert.equal(result.ticketLookup?.tickets[0]?.overdue, overdue);
+          assert.equal(result.content.includes("prazo vencido"), overdue);
+          assert.equal(overdueOfferCodeFrom([result.content]), overdue ? "INC-20311" : null);
+          assert.deepEqual(result.quickReplies, overdue ? ["Falar com um analista", "Não, obrigado"] : null);
+          assert.equal(result.handoff, null); // A oferta ainda exige aceite do funcionário.
+        });
+      }
     });
 
     it("oferta de vencido aceita: transfere com OVERDUE, mesmo se o modelo mandar outro motivo", async () => {
@@ -526,7 +565,8 @@ describe("decisões do agent (modelo fake)", () => {
     it("pedido explícito com LOW_CONFIDENCE do modelo: transfere registrando EMPLOYEE_REQUEST", async () => {
       const { runner } = setup([transfer({ reason: "LOW_CONFIDENCE", summary: "Pediu para falar com um analista." }), say("Ok")]);
       const result = await runner.runTurn(input("Quero falar com um analista"));
-      assert.deepEqual(result.handoff, { reason: "EMPLOYEE_REQUEST", summary: "Pediu para falar com um analista." });
+      assert.equal(result.handoff?.reason, "EMPLOYEE_REQUEST");
+      assert.match(result.handoff?.summary ?? "", /Pediu para falar com um analista/);
       assert.match(result.content, /Transferi a conversa/);
       assert.deepEqual(result.trace.actions.map((action) => [action.tool, action.status]), [["transferToAnalyst", "SUCCESS"]]);
       assert.equal(result.trace.intent, "TALK_TO_ANALYST");
@@ -747,7 +787,8 @@ describe("decisões do agent (modelo fake)", () => {
             ...returned,
             history: [...analystHistory, { authorType: "EMPLOYEE", content: question }, { authorType: "AGENT", content: offered.content }],
           }));
-          assert.deepEqual(result.handoff, { reason: "OVERDUE", summary: "INC-20311 vencido; funcionário aceitou a oferta de analista." });
+          assert.equal(result.handoff?.reason, "OVERDUE");
+          assert.match(result.handoff?.summary ?? "", /INC-20311 vencido; funcionário aceitou a oferta de analista/);
           assert.equal(result.trace.actions.find((action) => action.tool === "transferToAnalyst")?.status, "SUCCESS");
           assert.match(result.content, /^Transferi a conversa/);
           assert.equal(result.quickReplies, null);
@@ -773,7 +814,8 @@ describe("decisões do agent (modelo fake)", () => {
       it("LOW_CONFIDENCE proposto pelo modelo fake transfere após devolução e registra sucesso", async () => {
         const { runner } = setup([transfer({ reason: "LOW_CONFIDENCE", summary: "Impressora ainda falha." }), say("Vamos ver juntos: a luz de erro da impressora está acesa?", "OTHER")]);
         const result = await runner.runTurn(input("A impressora voltou a falhar", { ...returned, history: analystHistory }));
-        assert.deepEqual(result.handoff, { reason: "LOW_CONFIDENCE", summary: "Impressora ainda falha." });
+        assert.equal(result.handoff?.reason, "LOW_CONFIDENCE");
+        assert.match(result.handoff?.summary ?? "", /Impressora ainda falha/);
         assert.match(result.content, /^Transferi a conversa/);
         assert.equal(handoffProposalSchema.safeParse(result.handoff).success, true);
         const action = result.trace.actions.find((item) => item.tool === "transferToAnalyst");
@@ -1229,6 +1271,20 @@ describe("central de ajuda (modelo fake)", () => {
   };
   const search: FakeStep = { kind: "tool", toolName: "searchHelpCenter", input: { keywords: ["vpn", "809", "windows 10"] } };
   const answer = "Reinstale o cliente de VPN pelo portal de softwares e reinicie o computador.";
+
+  for (const [label, articleSlug, articleAnswer] of [
+    ["fonte inventada", "inexistente", "Não se aplica a este caso."],
+    ["escrita falsa", VPN.slug, "Criei um chamado para você."],
+    ["código alheio", VPN.slug, "A orientação é do INC-99999."],
+  ]) {
+    it(`aplicabilidade com ${label} não atravessa as guardas da proposta`, async () => {
+      const { runner } = setup([search, { kind: "tool", toolName: "draftTicket", input: { title: "VPN 809 Windows 11", description: "Falha na VPN, Windows 11", type: "INC", category: "NETWORK_VPN", priority: "MEDIUM", priorityReason: "Individual", affectedScope: "INDIVIDUAL", keywords: ["vpn", "809"] } }, { kind: "text", text: decisionJson("Texto substituído", { intent: "OPEN_TICKET", articleSlug: articleSlug!, articleAnswer: articleAnswer! }) }], { articles: () => Promise.resolve([VPN]) });
+      const result = await runner.runTurn(input("VPN falha só comigo"));
+      assert.equal(result.ticketDraft?.kind, "CREATE");
+      assert.ok(!result.content.includes(articleAnswer!));
+      assert.equal(result.trace.sources, undefined);
+    });
+  }
 
   it("dúvida com artigo: cita o slug da busca, com fonte, nota e respostas rápidas", async () => {
     const { runner, modelCalls } = setup([search, { kind: "text", text: decisionJson(answer, { intent: "QUESTION", articleSlug: "vpn-erro-809" }) }], { articles: () => Promise.resolve([VPN]) });

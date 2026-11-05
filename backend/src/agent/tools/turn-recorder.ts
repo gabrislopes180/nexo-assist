@@ -1,5 +1,6 @@
 import type { HandoffProposal, ProposedTicketDraft, SimilarTicket, TicketLookupResult } from "../../shared/chat.js";
 import type { HelpCenterSearchResult } from "../../shared/knowledge.js";
+import type { ConfirmableDraft } from "../../shared/conversation-draft.js";
 
 /** Execução de `transferToAnalyst`. Recusada: a conversa continua com o agent. */
 export type HandoffExecution =
@@ -85,6 +86,7 @@ export type TurnContextValues = {
   knownCodes: readonly string[];
   /** Um analista já devolveu a conversa: inclui instruções de autoria e continuidade na retomada. */
   returnedFromAnalyst: boolean;
+  pendingDraft?: ConfirmableDraft;
   /** Título do artigo que o usuário disse não ter resolvido: o chamado novo leva "Já tentou: <título>." */
   triedArticle: string | null;
   recorder: TurnRecorder;

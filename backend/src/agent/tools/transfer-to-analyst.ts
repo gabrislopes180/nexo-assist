@@ -65,13 +65,51 @@ function knownCodes(context: Context): Set<string> {
           : [],
       ) ?? [];
   const offered = context?.get("overdueOfferCode");
+  const pending = context?.get("pendingDraft");
   return new Set(
     [
       ...(context?.get("knownCodes") ?? []),
       ...(offered ? [offered] : []),
       ...fromLookups,
       ...fromDrafts,
+      ...(pending && pending.kind !== "CREATE" ? [pending.ticketCode] : []),
     ].map((code) => code.toUpperCase()),
+  );
+}
+
+const REASON_LABEL = {
+  EMPLOYEE_REQUEST: "Pedido explícito do funcionário",
+  OVERDUE: "Oferta por prazo vencido aceita pelo funcionário",
+  LOW_CONFIDENCE: "Agent sem segurança para resolver",
+} as const;
+
+/** Usa o rascunho atual, não assuntos antigos inferidos do histórico. Não cria nem confirma chamado. */
+function contextualSummary(input: TransferToAnalystInput, context: NonNullable<Context>, known: Set<string>): string {
+  const executions = context.get("recorder")?.drafts() ?? [];
+  const last = executions.at(-1);
+  // Uma tentativa nova bloqueada pode tratar de outro problema: não anexar o rascunho anterior.
+  const draft = last?.outcome === "DRAFTED" ? last.proposal : executions.length === 0 ? context.get("pendingDraft") : undefined;
+  const compact = (text: string, max: number) => {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    return normalized.length <= max ? normalized : `${normalized.slice(0, max).replace(/\s*\S+$/u, "")}…`;
+  };
+  let detail: string;
+  // Vencimento se refere à oferta aceita; um rascunho pendente pode ser de outro assunto.
+  if (draft && input.reason !== "OVERDUE") {
+    if (draft.kind === "CREATE") {
+      detail = `Problema atual: ${compact(draft.title, 120)}. Relato e tentativas informadas: ${compact(draft.description, 420)}. ` +
+        `Impacto informado: ${compact(draft.affectedDescription ?? draft.affectedScope, 100)}. Rascunho de abertura não confirmado; nenhum chamado criado por ele.`;
+    } else {
+      const code = "ticket" in draft ? draft.ticket.code : draft.ticketCode;
+      detail = `Chamado relacionado: ${code}. ${draft.kind === "REOPEN" ? "Reabertura" : "Complemento"} pendente de confirmação. ` +
+        `Relato: ${compact(draft.kind === "REOPEN" ? draft.reason : draft.content, 600)}.`;
+    }
+  } else {
+    detail = `${compact(input.summary, 650)} Contexto estruturado do problema não disponível; consultar histórico antes de supor impacto ou tentativas.`;
+  }
+  // O relato pode conter código digitado pelo funcionário e ainda não validado. Não o apresentar como chamado autorizado.
+  return `Motivo: ${REASON_LABEL[input.reason]}. ${detail}`.replace(LOOSE_TICKET_CODE, (match, prefix: string, digits: string) =>
+    known.has(`${prefix.toUpperCase()}-${digits}`) ? match : "[código não validado]",
   );
 }
 
@@ -114,13 +152,17 @@ function evaluate(
 ): HandoffExecution {
   if (!context?.get("actorId"))
     return { outcome: "REJECTED", problem: "UNAVAILABLE" };
+  // A função também é chamada fora do execute do Mastra: enriquecer não pode tornar uma entrada inválida aceitável.
+  if (!transferToAnalystInputSchema.safeParse(input).success)
+    return { outcome: "REJECTED", problem: "UNAVAILABLE" };
   const reason = resolvedReason(input.reason, context);
   if (typeof reason !== "string") return reason;
   const known = knownCodes(context);
   if (summaryCodes(input.summary).some((code) => !known.has(code))) {
     return { outcome: "REJECTED", problem: "UNKNOWN_TICKET_CODE" };
   }
-  const parsed = handoffProposalSchema.safeParse({ ...input, reason });
+  const summary = contextualSummary({ ...input, reason }, context, known);
+  const parsed = handoffProposalSchema.safeParse({ reason, summary });
   return parsed.success
     ? { outcome: "ACCEPTED", proposal: parsed.data }
     : { outcome: "REJECTED", problem: "UNAVAILABLE" };

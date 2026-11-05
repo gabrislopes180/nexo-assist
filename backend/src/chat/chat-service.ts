@@ -183,6 +183,7 @@ export function createChatService({ conversations, agentRunner, tickets, queries
           conversationId: reservation.conversationId,
           actor: { id: actor.id, name: actor.name },
           history: reservation.history,
+          ...(reservation.pendingDraft ? { pendingDraft: reservation.pendingDraft } : {}),
           message,
           returnedFromAnalyst: reservation.returnedToAgentAt !== null,
         });

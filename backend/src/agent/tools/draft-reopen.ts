@@ -88,6 +88,9 @@ export async function draftReopen(deps: ToolDeps, input: DraftReopenInput, conte
   const ownerId = context?.get("actorId");
   const execution: DraftExecution = ownerId ? await evaluate(deps, ownerId, input) : { outcome: "REOPEN_BLOCKED", block: { kind: "UNAVAILABLE" } };
   context?.get("recorder")?.recordDraft(execution);
+  if (execution.outcome === "REOPEN_BLOCKED" && execution.block.kind === "WINDOW_EXPIRED") {
+    context?.set("relatedCode", execution.block.ticket.code);
+  }
   return toModelOutput(execution);
 }
 
